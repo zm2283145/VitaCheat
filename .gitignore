@@ -1,0 +1,12 @@
+/build/
+/.cache/
+*.o
+*.obj
+*.exe
+*.pdb
+*.ilk
+*.gcda
+*.gcno
+*.profraw
+*.profdata
+
