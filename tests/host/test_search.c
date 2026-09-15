@@ -223,6 +223,10 @@ static void test_empty_and_invalid_inputs(void)
     q.type = VC_SCALAR_U8;
     q.relation = VC_RELATION_CHANGED;
     CHECK(vc_search_initial(bytes, sizeof(bytes), &q, offsets, 4, &written, &total) == VC_STATUS_INVALID_QUERY);
+    q.relation = (vc_relation)-1;
+    CHECK(vc_search_initial(bytes, sizeof(bytes), &q, offsets, 4, &written, &total) == VC_STATUS_INVALID_QUERY);
+    q.relation = (vc_relation)99;
+    CHECK(vc_search_initial(bytes, sizeof(bytes), &q, offsets, 4, &written, &total) == VC_STATUS_INVALID_QUERY);
 
     q.relation = VC_RELATION_UNCHANGED;
     CHECK(vc_search_refine(bytes, unchanged, sizeof(bytes), duplicate, 2, &q,

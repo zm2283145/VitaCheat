@@ -28,7 +28,10 @@ size_t vc_scalar_width(vc_scalar_type type)
 
 static bool vc_relation_is_valid(vc_relation relation)
 {
-    return relation >= VC_RELATION_EQUAL && relation <= VC_RELATION_DECREASED;
+    /* Some ARM EABI compilers choose an unsigned representation for this
+     * enum. Casting once makes negative/corrupt callers fail the same way on
+     * every target without a tautological lower-bound comparison. */
+    return (unsigned int)relation <= (unsigned int)VC_RELATION_DECREASED;
 }
 
 static uint32_t vc_width_mask(size_t width)
