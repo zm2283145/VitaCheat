@@ -8,9 +8,10 @@ online community database.
 This repository is an early scaffold. The current code is a portable,
 allocation-free memory snapshot search/refinement core, a lossless legacy
 VitaCheat `.psv` importer, and a deterministic menu-activation state machine,
-all with host tests. It does not yet include a Vita application or plugin,
-attach to a process, read or write Vita memory, freeze values, connect over a
-network, render a menu, or download cheats.
+all with host tests. A separate ordinary user-mode Vita self-test now exercises
+the scanner and five-second Select menu against memory owned by that test app.
+It is not a plugin and does not attach to a process, read or write another
+application's memory, freeze values, connect over a network, or download cheats.
 
 ## Why this project exists
 
@@ -59,6 +60,14 @@ The same portable milestone now also:
 
 No imported operation is executed in this milestone. See
 [docs/legacy-psv-compatibility.md](docs/legacy-psv-compatibility.md).
+
+The first Vita-facing build is the deliberately unprivileged and now
+hardware-tested
+[`VCHT00001` self-test](vita-self-test/README.md). It provides a real on-device
+five-second Select menu and runs the bounded scanner only over its own fixed
+test buffer. Its recorded retail 3.65 run passed six checks with zero failures;
+the [scoped hardware record](vita-self-test/hardware-result-retail-3.65.md)
+contains exact artifact hashes and the retained result screenshot.
 
 ## Intended end goals
 
@@ -120,7 +129,8 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-No VitaSDK installation is required for the current host-only milestone.
+VitaSDK is not required to build and run the host tests. Building the Vita
+self-test VPK does require VitaSDK.
 
 ## Relationship to VitaDebugger
 
@@ -133,10 +143,10 @@ access service.
 
 ## Compatibility
 
-No Vita compatibility is claimed yet because no Vita-side component exists.
-Retail Vita and Vita TV hardware on system software 3.65 will be the first
-hardware-validation target. Firmware 3.60 and other releases will be listed
-only after their own tests pass.
+No cross-process Vita compatibility is claimed yet. The ordinary user-mode
+self-test has passed on one retail Vita running system software 3.65. Vita TV,
+firmware 3.60, and other releases remain untested for this project and will be
+listed only after their own gates pass.
 
 ## Repository layout
 
@@ -150,6 +160,7 @@ only after their own tests pass.
 - `tests/host/test_legacy_psv.c` — mixed-format, truncation, and fail-closed
   importer tests.
 - `tests/host/test_menu_activation.c` — hold, release, and clock-reset tests.
+- `vita-self-test/` — ordinary user-mode on-device menu and owned-buffer probe.
 - `docs/architecture.md` — component boundaries and data flow.
 - `docs/legacy-psv-compatibility.md` — compatibility guarantees and limits.
 - `docs/security-model.md` — authority, transport, database, and cleanup rules.

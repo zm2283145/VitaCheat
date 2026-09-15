@@ -1,0 +1,6 @@
+vita-self-test/deployment-manifest.v1 text eol=lf
+vita-self-test/deployment-request.v1 text eol=lf
+vita-self-test/deployment-result.v1 text eol=lf
+vita-self-test/deployment-signature.bin binary
+vita-self-test/deployment-public-key.der binary
+vita-self-test/hardware-result-retail-3.65.jpg binary

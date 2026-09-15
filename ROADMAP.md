@@ -40,9 +40,12 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
 
 ## 3. Vita self-test application
 
-- [ ] Build a VitaSDK app that scans only its own explicit test buffer.
+- [x] Build a VitaSDK app that scans only its own explicit test buffer.
+- [x] Feed the portable five-second Select trigger into a bounded on-device
+      menu without adding privileged kernel-module or foreign-process access.
 - [ ] Validate memory pressure, cancellation, suspend/resume, and cleanup.
-- [ ] Record the first retail Vita/Vita TV 3.65 hardware gate.
+- [x] Record the first scoped retail Vita 3.65 self-test hardware gate.
+- [ ] Repeat the scoped self-test gate on Vita TV 3.65.
 
 ## 4. Read-only target discovery
 

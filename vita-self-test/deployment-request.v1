@@ -1,0 +1,8 @@
+VITADEVDEPLOY-REQUEST-1
+job=12dcd5934129a0d295c7ab9bd39c125f
+nonce=4df2274a1459e1cb604b970023ee0333b34378e16afc966d8569e0eb76085f9a
+action=install_launch
+title_id=VCHT00001
+manifest_sha256=a7ab9f596339fc0ca9c8c45d75e86ec3e608d22cf086b9306746aa671a73a267
+file_count=3
+total_size=154606
