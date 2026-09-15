@@ -5,10 +5,12 @@ cheat-authoring tool on user-owned PlayStation Vita systems. The intended end
 result combines an on-device workflow with an optional PC companion and an
 online community database.
 
-This repository is only an initial scaffold. The current code is a portable,
-allocation-free memory snapshot search/refinement core with host tests. It does
-not yet include a Vita application or plugin, attach to a process, read or write
-Vita memory, freeze values, connect over a network, or download cheats.
+This repository is an early scaffold. The current code is a portable,
+allocation-free memory snapshot search/refinement core, a lossless legacy
+VitaCheat `.psv` importer, and a deterministic menu-activation state machine,
+all with host tests. It does not yet include a Vita application or plugin,
+attach to a process, read or write Vita memory, freeze values, connect over a
+network, render a menu, or download cheats.
 
 ## Why this project exists
 
@@ -26,7 +28,8 @@ or proprietary SDK files.
 
 ## Current milestone
 
-The first milestone provides `vitacheat_core`, a pure C11 scanner that:
+The first milestone provides `vitacheat_core`, a C11 scanner for the supported
+Windows/Vita targets (which provide `uintptr_t`) that:
 
 - reads only caller-provided immutable byte snapshots;
 - performs explicit little-endian U8/S8/U16/S16/U32/S32 comparisons;
@@ -39,6 +42,23 @@ The first milestone provides `vitacheat_core`, a pure C11 scanner that:
 - rejects malformed queries and candidate lists before writing results.
 
 It deliberately has no VitaSDK, process, kernel, file, or network dependency.
+
+The same portable milestone now also:
+
+- indexes legacy `.psv` comments, `_V0`/`_V1` entries, and code records while
+  retaining byte-exact source spans, including original line endings;
+- recognizes only the documented `$0000`, `$0100`, and `$0200` direct-write
+  forms as typed 8/16/32-bit operations;
+- preserves every other syntactically valid code as opaque data instead of
+  guessing its meaning;
+- reports malformed records, truncation, and legacy format-limit violations;
+- exposes parsed records only when all output buffers fit, preventing dangling
+  cross-indexes in a truncated import;
+- emits one menu-open event after Select remains held for five seconds, then
+  waits for a release before it can fire again.
+
+No imported operation is executed in this milestone. See
+[docs/legacy-psv-compatibility.md](docs/legacy-psv-compatibility.md).
 
 ## Intended end goals
 
@@ -121,9 +141,17 @@ only after their own tests pass.
 ## Repository layout
 
 - `include/vitacheat/search.h` — public bounded search/refinement API.
+- `include/vitacheat/legacy_psv.h` — bounded lossless legacy importer API.
+- `include/vitacheat/menu_activation.h` — portable Select-hold state machine.
 - `src/search.c` — portable little-endian implementation.
+- `src/legacy_psv.c` — syntax indexing and conservative operation mapping.
+- `src/menu_activation.c` — five-second one-shot activation logic.
 - `tests/host/test_search.c` — native behavioral and boundary tests.
+- `tests/host/test_legacy_psv.c` — mixed-format, truncation, and fail-closed
+  importer tests.
+- `tests/host/test_menu_activation.c` — hold, release, and clock-reset tests.
 - `docs/architecture.md` — component boundaries and data flow.
+- `docs/legacy-psv-compatibility.md` — compatibility guarantees and limits.
 - `docs/security-model.md` — authority, transport, database, and cleanup rules.
 - `ROADMAP.md` — staged work from the host core to hardware validation.
 

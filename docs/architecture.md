@@ -15,6 +15,22 @@ Offsets are 32-bit and relative to a region selected by a future adapter. The
 adapter, not the search engine, will map a result to a verified process, module,
 build identity, region, and ASLR placement.
 
+The portable core also owns two authority-free helpers:
+
+- a legacy `.psv` syntax indexer that holds views into caller-owned source and
+  conservatively maps only independently documented operations; and
+- a clock-driven Select-hold state machine that emits one event after five
+  continuous seconds and rearms only after release.
+
+Neither helper reads controller hardware, opens files, renders UI, nor writes
+memory. Those responsibilities remain in adapters with separately testable
+authority.
+
+The portable target contract is C11 plus an integer pointer type (`uintptr_t`)
+wide enough to represent object ranges. That holds for the supported Windows
+host and ARM Vita targets and lets the parser reject overlapping source and
+output buffers without relying on undefined relational pointer comparisons.
+
 ## Future access adapter
 
 The device adapter will expose explicit capabilities rather than one general

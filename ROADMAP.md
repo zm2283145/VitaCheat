@@ -9,6 +9,11 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
 - [x] Bounded candidate refinement.
 - [x] Integer little-endian decoding without unaligned pointer casts.
 - [x] Deterministic host tests for ordinary and malformed inputs.
+- [x] Lossless, allocation-free legacy `.psv` syntax importer.
+- [x] Conservative typed mapping for documented direct 8/16/32-bit writes.
+- [x] Preserve unsupported legacy codes as opaque records without executing
+      guessed behavior.
+- [x] Portable, debounced five-second Select-hold activation state machine.
 - [ ] Add sanitizer, fuzz, and property-based CI coverage.
 - [ ] Add snapshot/session file formats with strict version and size limits.
 
@@ -24,7 +29,11 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
 
 - [ ] File-backed snapshot capture and refinement on a PC.
 - [ ] Save and resume search sessions.
-- [ ] Define a declarative cheat schema.
+- [ ] Finalize the versioned declarative cheat schema beyond the current
+      versioned import representation.
+- [ ] Implement and test each remaining documented legacy VitaCheat code family
+      independently; keep unknown codes opaque indefinitely.
+- [ ] Add a conversion/export tool that proves byte-exact `.psv` round trips.
 - [ ] Bind every record to title ID, module identity, and module-relative
       offsets.
 - [ ] Reject mismatched builds before exposing a write action.
@@ -45,6 +54,8 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
 ## 5. On-device search UI
 
 - [ ] Search, refine, cancel, sort, and inspect candidates on Vita.
+- [ ] Feed Vita controller samples into the tested five-second Select trigger
+      and render the menu only after its one-shot event.
 - [ ] Preserve progress within fixed memory and time budgets.
 - [ ] Build accessible controls and clear current-operation feedback.
 

@@ -10,6 +10,12 @@ The current library cannot access a process, file, socket, or kernel API. It
 only searches byte arrays supplied by its caller. Output storage is also
 caller-owned and capacity bounded.
 
+The legacy `.psv` importer likewise only indexes caller-owned bytes. Unknown
+operations remain opaque, malformed lines remain visible, and one unsupported
+modifier taints the complete cheat entry so a later direct-write record cannot
+be executed out of sequence. The five-second Select helper consumes only a
+button state and timestamp; it grants no memory capability by itself.
+
 ## Authority model
 
 - Read discovery, snapshot capture, writes, and persistent freezes are separate
