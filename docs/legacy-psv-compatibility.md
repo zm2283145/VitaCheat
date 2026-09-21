@@ -79,9 +79,11 @@ authoring tool can represent more of it.
   not yet translated. Each family needs its own primary-source interpretation,
   hostile-input tests, execution bounds, and Vita hardware gate.
 - `$B200` is translated only into a bounded import representation. Runtime
-  module/segment resolution is not implemented and must bind the selector to a
-  verified module identity for the current process generation before any
-  relative write can be offered.
+  execution is not implemented. The portable target-attestation catalog can
+  now resolve its module serial and segment index only against an exact
+  immutable module/load generation and return symbolic segment metadata. A
+  verified native adapter and real measured title facts are still required
+  before any relative memory access can be offered.
 - A `.suprx` binary is never treated as a data file.
 - Legacy absolute addresses are not automatically considered safe. Before a
   future write is offered, conversion must bind it to a verified title, module,
@@ -89,7 +91,9 @@ authoring tool can represent more of it.
 - `_V1` is represented as legacy intent; it will not bypass the new tool's
   explicit arming and safety policy.
 
-The US Ratchet & Clank Collection `PCSA00133` first-game bolt entry is now a
-host fixture for a valid `$B200` plus `$0100` chain. Once a read-only Vita-side
-loader exists, the first hardware step will parse and display that entry and
-its resolved module identity without enabling writes.
+The US Ratchet & Clank Collection `PCSA00133`, version `1.00`, now also has a
+target-policy fixture using clearly test-only fingerprint/module/segment facts.
+Those bytes and addresses are placeholders, not measured hardware values. Once
+a verified read-only Vita adapter and measured manifest exist, the first
+hardware step will parse and display the `$B200` plus `$0100` entry and its
+attested symbolic module/segment resolution without enabling writes.

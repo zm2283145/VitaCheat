@@ -29,6 +29,11 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
 - [x] Allocation-free menu/pause coordinator with exact claimant handoff,
       explicit protected-thread exclusion, bounded leases, readiness
       acknowledgement, watchdog expiry, and retryable reverse cleanup.
+- [x] Allocation-free trusted-target attestation catalog with transactional
+      bounded acquisition, immutable nonrepeating revisions, exact
+      title/version/fingerprint/module policy matching, module/segment lookup,
+      explicit thread ownership checks, and symbolic permission-scoped range
+      validation.
 - [x] Add sanitizer, fuzz, and property-based CI coverage.
 - [ ] Add snapshot/session file formats with strict version and size limits.
 
@@ -67,10 +72,18 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
 
 ## 4. Read-only target discovery
 
+- [x] Define and host-test the portable trusted snapshot, module/segment/thread
+      catalog, exact build policy, lifecycle invalidation, and checked range
+      query foundation without adding a memory primitive.
 - [ ] Enumerate allowlisted user processes, modules, and readable regions.
-- [ ] Capture bounded snapshots without write capability.
-- [ ] Reconcile ASLR through verified module-relative addressing.
-- [ ] Add lifecycle tests for app exit, relaunch, and module churn.
+- [ ] Implement a documented native adapter that supplies authoritative
+      process/module/thread generations and measured build fingerprints.
+- [ ] Capture foreign-process bytes through a separately reviewed read-only
+      memory service.
+- [x] Reconcile trusted catalog addresses into verified module/segment-relative
+      symbolic offsets without dereferencing them.
+- [x] Add portable lifecycle tests for app exit, relaunch, PID reuse,
+      foreground sequence rollback, and module churn.
 
 ## 5. On-device search UI
 
@@ -97,6 +110,9 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
       excludes the injected menu, input, renderer, watchdog, and cleanup paths.
 - [x] Host-test coupling menu open/close to transactional pause/resume and
       refuse to open when suspension or rollback is incomplete.
+- [x] Add an optional immutable target-snapshot revision gate before and around
+      pause acquisition while preserving existing coordinator behavior when no
+      attestation adapter is configured.
 - [ ] Prove supported display hooks per rendering path before claiming
       cross-title overlay compatibility.
 - [ ] Preserve progress within fixed memory and time budgets.

@@ -38,7 +38,11 @@ The portable core also owns authority-free helpers:
   and a one-time local menu-open authorization; and
 - a menu/pause coordinator that validates an explicit protected-thread
   allowlist, consumes one exact claimant authorization, owns the pause
-  transaction, and issues one bounded local menu lease.
+  transaction, and issues one bounded local menu lease; and
+- a trusted-target attestation catalog that transactionally copies bounded
+  process, build, module, segment, and thread facts from an injected adapter,
+  publishes immutable revisions, and answers exact policy, ownership, and
+  symbolic range queries.
 
 None of these helpers reads controller hardware, enumerates or suspends threads,
 opens files, renders UI, or writes memory. Those responsibilities remain in
@@ -278,6 +282,53 @@ coherent identity/readiness observations, ownership verification, and
 attested suspend/resume transport. It does not draw a menu, read input, access
 memory, restore patches, or execute search/write/freeze operations.
 
+### Portable target attestation and range foundation
+
+`include/vitacheat/target_attestation.h` defines the read-only trust boundary
+needed before a pause adapter or future memory service can use a target.
+Collection is begin/enumerate/end through injected callbacks. A nonzero
+mutation token must survive every module and thread read and the completion
+callback; mutation retries are capped at three. Adapter calls run outside the
+nonblocking serialization gate, reentry fails `BUSY`, and no partial or stale
+completion can publish. The complete candidate is copied into fixed owned
+storage and validated only after collection ends.
+
+Each immutable snapshot has a nonzero local revision and lifecycle generation,
+exact PID/process generation and foreground sequence, canonical bounded title
+ID, optional bounded version label, and an opaque build fingerprint algorithm
+and bytes supplied by the adapter. The portable layer implements no hash.
+Modules use a stable nonzero module ID plus nonzero load generation. Their
+bounded segments have unique indices, nonzero sizes, checked 32-bit ends, and
+explicit read/write/execute permissions; overlap and unknown flags/bits are
+rejected. Thread descriptors must prove each positive unique ID belongs to the
+same exact PID/process generation. Opaque role flags are retained but never
+used to infer gameplay ownership.
+
+Policy matching exact-compares title and any supplied version, fingerprint, or
+module-generation constraints. `$B200`-compatible lookup is bounded by module
+serial and segment index. Range resolution checks revision, module generation,
+32-bit addition, one-segment containment, and requested permissions, then
+returns only module/segment/offset/length metadata. It never dereferences an
+address. Gameplay-thread validation accepts only a caller-supplied sorted
+unique allowlist and a separate protected set; names, priority, enumeration
+order, and role flags cannot select threads.
+
+The menu coordinator has an optional callback for the exact immutable target
+revision. It runs before claimant authorization is consumed and at checked
+suspend boundaries. If absent, existing coordinator behavior is unchanged; if
+present, a zero/stale revision or ownership mismatch fails before native pause
+operations. Foreground change/loss, process exit, module unload/reload, plugin
+unload, reset, stop, and sequence rollback invalidate derived use. Stop scrubs
+identity, fingerprint, module, address, and thread data before optional cleanup
+and remains stopped on cleanup failure.
+
+This is a host-first catalog and validator, not native discovery. No
+VitaSDK/taiHEN generation source, trusted enumeration path, or kernel transport
+meeting the contract is documented in this repository, so no guessed Vita
+adapter or firmware offset is added. Actual measured title manifests,
+read-only copying, injection, renderer/input hooks, menu/search UI, and
+write/rollback hardware gates remain separate work.
+
 The portable target contract is C11 plus an integer pointer type (`uintptr_t`)
 wide enough to represent object ranges. That holds for the supported Windows
 host and ARM Vita targets and lets the parser reject overlapping source and
@@ -285,14 +336,15 @@ output buffers without relying on undefined relational pointer comparisons.
 
 ## Future privileged capabilities
 
-The implemented service is launch-only. A later privileged component may
+The implemented service is launch-only, and target attestation is
+representation and validation only. A later privileged component may
 expose the following separately versioned capabilities to the injected user
 plugin rather than one general memory service:
 
-1. discover a title and verified modules;
-2. list bounded, allowlisted user-memory regions;
+1. acquire native facts for the existing verified title/module catalog;
+2. list native bounded, allowlisted user-memory regions;
 3. copy a readable region into a snapshot;
-4. enumerate and classify target threads for cooperative menu pause;
+4. enumerate explicit target-thread ownership for cooperative menu pause;
 5. arm a short-lived write capability after on-device approval;
 6. apply typed writes or freezes from declarative records;
 7. restore state and release target ownership on every exit path.

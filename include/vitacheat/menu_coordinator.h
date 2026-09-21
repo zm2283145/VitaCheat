@@ -77,6 +77,7 @@ typedef struct vc_menu_thread_allowlist {
     uint64_t process_generation;
     uint64_t module_generation;
     uint64_t revision;
+    uint64_t target_snapshot_revision;
     const vc_thread_id *thread_ids;
     size_t thread_count;
     vc_menu_protected_threads protected_threads;
@@ -107,9 +108,23 @@ typedef bool (*vc_menu_verify_thread_ownership_fn)(
     const vc_thread_id *thread_ids,
     size_t thread_count);
 
+/*
+ * Optional fail-closed bridge to an immutable target-attestation snapshot.
+ * The callback must validate the exact target, snapshot revision, copied
+ * gameplay allowlist, and protected set without selecting threads itself.
+ */
+typedef bool (*vc_menu_validate_target_attestation_fn)(
+    void *context,
+    const vc_launch_claimant_identity_snapshot *target,
+    uint64_t target_snapshot_revision,
+    const vc_thread_id *thread_ids,
+    size_t thread_count,
+    const vc_menu_protected_threads *protected_threads);
+
 typedef struct vc_menu_coordinator_dependencies {
     vc_menu_get_runtime_snapshot_fn get_runtime_snapshot;
     vc_menu_verify_thread_ownership_fn verify_thread_ownership;
+    vc_menu_validate_target_attestation_fn validate_target_attestation;
     vc_pause_thread_operation suspend_thread;
     vc_pause_thread_operation resume_thread;
     void *context;
@@ -140,6 +155,7 @@ typedef struct vc_menu_coordinator {
     uint64_t lease_pause_generation;
     uint64_t lease_lifecycle_generation;
     uint64_t next_lease_id;
+    uint64_t target_snapshot_revision;
     uint64_t started_ms;
     uint64_t acknowledgement_deadline_ms;
     uint64_t deadline_ms;

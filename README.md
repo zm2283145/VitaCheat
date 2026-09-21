@@ -12,11 +12,12 @@ plus transactional gameplay-thread pause ownership, a versioned,
 allocation-free Quick Menu launch-request broker, a caller-attesting,
 copy-bounded portable launch service front door, a host-testable Quick Menu
 launcher and game claimant, and a portable authorization-to-pause menu
-coordinator, all with host tests. A separate ordinary user-mode Vita self-test
-now exercises the scanner and five-second Select menu against memory owned by
-that test app. It is not a plugin and does not attach to a process, suspend
-another application's threads, read or write another application's memory,
-freeze values, connect over a network, or download cheats.
+coordinator, plus a portable trusted-target attestation catalog and checked
+range resolver, all with host tests. A separate ordinary user-mode Vita
+self-test now exercises the scanner and five-second Select menu against memory
+owned by that test app. It is not a plugin and does not attach to a process,
+suspend another application's threads, read or write another application's
+memory, freeze values, connect over a network, or download cheats.
 
 ## Why this project exists
 
@@ -121,15 +122,36 @@ The same portable milestone now also:
 - revokes local menu authority before reverse resume on close, timeout, clock
   rollback, foreground/overlay/presentation change, reset, unload, or stop,
   retaining failed resume ownership for bounded retry; and
+- transactionally collects a trusted foreground target into fixed owned
+  storage through injected begin/module/thread/end callbacks, detects mutation
+  with a nonzero collection token, and publishes only completely validated
+  immutable revisions;
+- binds each snapshot to exact PID/process generation, foreground sequence,
+  canonical title ID, optional version label, opaque adapter-supplied
+  fingerprint algorithm/bytes, module/load generations, checked segments, and
+  exact thread ownership;
+- rejects malformed/duplicate/over-limit identities, module or thread facts,
+  zero/wrapping/overlapping segments, unknown permissions, sequence rollback,
+  stale revisions, and partial or repeatedly mutating collections;
+- exact-matches title/version/fingerprint/module policy facts, resolves bounded
+  `$B200` module serial and segment indices, and validates permission-scoped
+  32-bit ranges without dereferencing memory or returning a kernel pointer;
+- validates only caller-supplied sorted gameplay and protected thread sets,
+  never selecting threads from names, roles, priority, order, or hard-coded
+  IDs, and exposes an optional coordinator pre-pause attestation bridge; and
+- invalidates and scrubs snapshots on foreground loss/change, process exit,
+  module churn, plugin unload, reset, stop, or sequence rollback while keeping
+  revisions nonzero and non-reusable within one instance; and
 - keeps menu lifecycle separate from rendering, input, discovery, patch
   rollback, memory access, write, search, freeze, and hardware operations.
 
 The pause transaction, menu coordinator, launch broker, launch service,
-launcher controller, and game claimant have no platform authority by
-themselves; process identity, foreground, overlay, presentation, thread
-ownership/control, copy/transport, UI, worker, clock, and cleanup operations are
-injected by future native adapters. No imported operation is executed in this
-milestone.
+launcher controller, game claimant, and target attestation catalog have no
+platform authority by themselves; process identity, foreground, overlay,
+presentation, module/segment/thread enumeration, thread ownership/control,
+copy/transport, UI, worker, clock, and cleanup operations are injected by
+future native adapters. No imported operation is executed and no memory is
+read in this milestone.
 See
 [docs/legacy-psv-compatibility.md](docs/legacy-psv-compatibility.md).
 
@@ -192,10 +214,13 @@ recovery component, but is no longer the planned production launcher. A generic
 cross-title overlay is still unproven and will not be claimed until renderer
 hooks and cleanup pass hardware gates. The portable broker, byte ABI, service boundary, add-on-side controller, and
 injected-game claimant/open-authorization lifecycle, and portable
-authorization-to-pause/menu-lease coordinator are implemented. A native
-QuickMenuReborn module, verified kernel/user transport and injection adapters,
-title-specific allowlist acquisition policy, renderer/input/menu
-implementation, bounded memory service, and hardware cleanup gates are not.
+authorization-to-pause/menu-lease coordinator, trusted target snapshot, policy
+matcher, module/segment catalog, exact thread ownership validator, and symbolic
+range resolver are implemented. Verified native target/foreground/module/
+segment/thread adapters, a native QuickMenuReborn module, kernel/user
+transport and injection, actual measured title manifests, a read-only memory
+service, renderer/input/menu/search UI, and write/rollback hardware gates are
+not.
 
 The online database will supply bounded declarative records, never executable
 scripts. The kernel service must expose a narrow versioned ABI and pass a
@@ -239,12 +264,17 @@ For bounded libFuzzer coverage, add `-DVITACHEAT_BUILD_FUZZERS=ON` and run
 `build-sanitize/vitacheat_quick_menu_launcher_fuzzer -runs=10000 -max_len=512`
 and
 `build-sanitize/vitacheat_launch_claimant_fuzzer -runs=10000 -max_len=512` and
-`build-sanitize/vitacheat_menu_coordinator_fuzzer -runs=10000 -max_len=512`.
+`build-sanitize/vitacheat_menu_coordinator_fuzzer -runs=10000 -max_len=512`
+and
+`build-sanitize/vitacheat_target_attestation_fuzzer -runs=10000 -max_len=640`.
 Dependency-free deterministic smoke targets are also available as
 `make launch-service-fuzz-smoke` and
 `make quick-menu-launcher-fuzz-smoke` and
 `make launch-claimant-fuzz-smoke` and
-`make menu-coordinator-fuzz-smoke`.
+`make menu-coordinator-fuzz-smoke` and
+`make target-attestation-fuzz-smoke`. GCC's bounded static-analyzer pass is
+available as `make analyze` or with
+`-DVITACHEAT_ENABLE_ANALYZER=ON -DBUILD_TESTING=OFF`.
 
 VitaSDK is not required to build and run the host tests. Building the Vita
 self-test VPK does require VitaSDK.
@@ -313,6 +343,9 @@ listed only after their own gates pass.
   identity/overlay/presentation claimant and one-shot open authorization.
 - `include/vitacheat/menu_coordinator.h` — exact authorization handoff,
   protected-thread allowlist, pause ownership, and bounded menu lease.
+- `include/vitacheat/target_attestation.h` — trusted target catalog,
+  transactional adapter contract, exact policy/thread checks, lifecycle
+  invalidation, and symbolic range resolution.
 - `src/search.c` — portable little-endian implementation.
 - `src/legacy_psv.c` — syntax indexing and conservative operation mapping.
 - `src/menu_activation.c` — five-second one-shot activation logic.
@@ -326,6 +359,8 @@ listed only after their own gates pass.
   worker, one-time authorization, and unload/stop cleanup.
 - `src/menu_coordinator.c` — authorization-to-pause transaction, lease,
   watchdog, lifecycle revalidation, and retryable reverse cleanup.
+- `src/target_attestation.c` — immutable snapshot publication, identity and
+  catalog validation, policy matching, ownership checks, and range resolution.
 - `tests/host/test_search.c` — native behavioral and boundary tests.
 - `tests/host/test_legacy_psv.c` — mixed-format, truncation, and fail-closed
   importer tests.
@@ -342,6 +377,9 @@ listed only after their own gates pass.
   churn, exact transport, authorization, cleanup, and bounded state tests.
 - `tests/host/test_menu_coordinator.c` — allowlist, authorization, pause,
   lease, lifecycle, reentrancy, expiry, and cleanup tests.
+- `tests/host/test_target_attestation.c` — hostile adapter collection,
+  identity/catalog/policy/range/thread boundaries, lifecycle, and secrecy
+  tests, including test-only `PCSA00133`/`1.00` placeholder facts.
 - `tests/fuzz/fuzz_launch_broker.c` — bounded codec/dispatch/lifecycle fuzzer.
 - `tests/fuzz/fuzz_launch_service.c` — bounded untrusted-byte, metadata, copy,
   and service-lifecycle fuzzer.
@@ -351,6 +389,8 @@ listed only after their own gates pass.
   observation, transport, authorization, and time fuzzer.
 - `tests/fuzz/fuzz_menu_coordinator.c` — bounded coordinator allowlist,
   authorization, callback, lease, lifecycle, and cleanup fuzzer.
+- `tests/fuzz/fuzz_target_attestation.c` — bounded hostile catalog,
+  transaction, lifecycle, and range-query fuzzer.
 - `vita-self-test/` — ordinary user-mode on-device menu and owned-buffer probe.
 - `docs/architecture.md` — component boundaries and data flow.
 - `docs/legacy-psv-compatibility.md` — compatibility guarantees and limits.

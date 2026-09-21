@@ -4,6 +4,7 @@ CFLAGS ?= -O2
 
 CPPFLAGS += -Iinclude
 CFLAGS += -std=c11 -Wall -Wextra -Werror -Wpedantic
+ANALYZER_FLAGS ?= -fanalyzer
 
 BUILD_DIR := build
 SEARCH_TEST_BIN := $(BUILD_DIR)/vitacheat_host_tests
@@ -15,22 +16,24 @@ LAUNCH_SERVICE_TEST_BIN := $(BUILD_DIR)/vitacheat_launch_service_tests
 QUICK_MENU_LAUNCHER_TEST_BIN := $(BUILD_DIR)/vitacheat_quick_menu_launcher_tests
 LAUNCH_CLAIMANT_TEST_BIN := $(BUILD_DIR)/vitacheat_launch_claimant_tests
 MENU_COORDINATOR_TEST_BIN := $(BUILD_DIR)/vitacheat_menu_coordinator_tests
+TARGET_ATTESTATION_TEST_BIN := $(BUILD_DIR)/vitacheat_target_attestation_tests
 LAUNCH_SERVICE_FUZZ_SMOKE_BIN := $(BUILD_DIR)/vitacheat_launch_service_fuzz_smoke
 QUICK_MENU_LAUNCHER_FUZZ_SMOKE_BIN := $(BUILD_DIR)/vitacheat_quick_menu_launcher_fuzz_smoke
 LAUNCH_CLAIMANT_FUZZ_SMOKE_BIN := $(BUILD_DIR)/vitacheat_launch_claimant_fuzz_smoke
 MENU_COORDINATOR_FUZZ_SMOKE_BIN := $(BUILD_DIR)/vitacheat_menu_coordinator_fuzz_smoke
+TARGET_ATTESTATION_FUZZ_SMOKE_BIN := $(BUILD_DIR)/vitacheat_target_attestation_fuzz_smoke
 TEST_BINS := $(SEARCH_TEST_BIN) $(PSV_TEST_BIN) $(ACTIVATION_TEST_BIN) \
 	$(PAUSE_TEST_BIN) $(LAUNCH_BROKER_TEST_BIN) $(LAUNCH_SERVICE_TEST_BIN) \
 	$(QUICK_MENU_LAUNCHER_TEST_BIN) $(LAUNCH_CLAIMANT_TEST_BIN) \
-	$(MENU_COORDINATOR_TEST_BIN)
+	$(MENU_COORDINATOR_TEST_BIN) $(TARGET_ATTESTATION_TEST_BIN)
 CORE_SOURCES := src/search.c src/legacy_psv.c src/menu_activation.c src/pause.c \
 	src/launch_broker.c src/launch_service.c src/quick_menu_launcher.c \
-	src/launch_claimant.c src/menu_coordinator.c
+	src/launch_claimant.c src/menu_coordinator.c src/target_attestation.c
 HEADERS := include/vitacheat/search.h include/vitacheat/legacy_psv.h \
 	include/vitacheat/menu_activation.h include/vitacheat/pause.h \
 	include/vitacheat/launch_broker.h include/vitacheat/launch_service.h \
 	include/vitacheat/quick_menu_launcher.h include/vitacheat/launch_claimant.h \
-	include/vitacheat/menu_coordinator.h
+	include/vitacheat/menu_coordinator.h include/vitacheat/target_attestation.h
 VITA_CC ?= arm-vita-eabi-gcc
 VITA_ELF_CREATE ?= vita-elf-create
 VITA_MAKE_FSELF ?= vita-make-fself
@@ -49,11 +52,13 @@ VITA_OBJECTS := $(VITA_BUILD_DIR)/main.o $(VITA_BUILD_DIR)/search.o \
 VITA_PORTABLE_CHECK_OBJECTS := $(VITA_BUILD_DIR)/pause-portable.o \
 	$(VITA_BUILD_DIR)/launch-claimant-portable.o \
 	$(VITA_BUILD_DIR)/menu-coordinator-portable.o \
-	$(VITA_BUILD_DIR)/menu-coordinator-fuzz-portable.o
+	$(VITA_BUILD_DIR)/menu-coordinator-fuzz-portable.o \
+	$(VITA_BUILD_DIR)/target-attestation-portable.o \
+	$(VITA_BUILD_DIR)/target-attestation-fuzz-portable.o
 
 .PHONY: all test launch-service-fuzz-smoke quick-menu-launcher-fuzz-smoke \
 	launch-claimant-fuzz-smoke menu-coordinator-fuzz-smoke \
-	vita-self-test clean
+	target-attestation-fuzz-smoke analyze vita-self-test clean
 
 all: $(TEST_BINS)
 
@@ -87,6 +92,9 @@ $(LAUNCH_CLAIMANT_TEST_BIN): $(CORE_SOURCES) tests/host/test_launch_claimant.c $
 $(MENU_COORDINATOR_TEST_BIN): $(CORE_SOURCES) tests/host/test_menu_coordinator.c $(HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(CORE_SOURCES) tests/host/test_menu_coordinator.c -o $(MENU_COORDINATOR_TEST_BIN)
 
+$(TARGET_ATTESTATION_TEST_BIN): $(CORE_SOURCES) tests/host/test_target_attestation.c $(HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(CORE_SOURCES) tests/host/test_target_attestation.c -o $(TARGET_ATTESTATION_TEST_BIN)
+
 $(LAUNCH_SERVICE_FUZZ_SMOKE_BIN): $(CORE_SOURCES) tests/fuzz/fuzz_launch_service.c $(HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -DVC_LAUNCH_SERVICE_FUZZ_STANDALONE \
 		$(CORE_SOURCES) tests/fuzz/fuzz_launch_service.c -o $@
@@ -103,6 +111,10 @@ $(MENU_COORDINATOR_FUZZ_SMOKE_BIN): $(CORE_SOURCES) tests/fuzz/fuzz_menu_coordin
 	$(CC) $(CPPFLAGS) $(CFLAGS) -DVC_MENU_COORDINATOR_FUZZ_STANDALONE \
 		$(CORE_SOURCES) tests/fuzz/fuzz_menu_coordinator.c -o $@
 
+$(TARGET_ATTESTATION_FUZZ_SMOKE_BIN): $(CORE_SOURCES) tests/fuzz/fuzz_target_attestation.c $(HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DVC_TARGET_ATTESTATION_FUZZ_STANDALONE \
+		$(CORE_SOURCES) tests/fuzz/fuzz_target_attestation.c -o $@
+
 test: $(TEST_BINS)
 	./$(SEARCH_TEST_BIN)
 	./$(PSV_TEST_BIN)
@@ -113,6 +125,7 @@ test: $(TEST_BINS)
 	./$(QUICK_MENU_LAUNCHER_TEST_BIN)
 	./$(LAUNCH_CLAIMANT_TEST_BIN)
 	./$(MENU_COORDINATOR_TEST_BIN)
+	./$(TARGET_ATTESTATION_TEST_BIN)
 
 launch-service-fuzz-smoke: $(LAUNCH_SERVICE_FUZZ_SMOKE_BIN)
 	./$(LAUNCH_SERVICE_FUZZ_SMOKE_BIN)
@@ -125,6 +138,12 @@ launch-claimant-fuzz-smoke: $(LAUNCH_CLAIMANT_FUZZ_SMOKE_BIN)
 
 menu-coordinator-fuzz-smoke: $(MENU_COORDINATOR_FUZZ_SMOKE_BIN)
 	./$(MENU_COORDINATOR_FUZZ_SMOKE_BIN)
+
+target-attestation-fuzz-smoke: $(TARGET_ATTESTATION_FUZZ_SMOKE_BIN)
+	./$(TARGET_ATTESTATION_FUZZ_SMOKE_BIN)
+
+analyze:
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(ANALYZER_FLAGS) -fsyntax-only $(CORE_SOURCES)
 
 vita-self-test: $(VITA_BUILD_DIR)/vitacheat-self-test.vpk $(VITA_PORTABLE_CHECK_OBJECTS)
 
@@ -147,6 +166,12 @@ $(VITA_BUILD_DIR)/menu-coordinator-portable.o: src/menu_coordinator.c include/vi
 	$(VITA_CC) $(VITA_PORTABLE_CFLAGS) -c $< -o $@
 
 $(VITA_BUILD_DIR)/menu-coordinator-fuzz-portable.o: tests/fuzz/fuzz_menu_coordinator.c include/vitacheat/menu_coordinator.h Makefile | $(VITA_BUILD_DIR)
+	$(VITA_CC) $(VITA_PORTABLE_CFLAGS) -c $< -o $@
+
+$(VITA_BUILD_DIR)/target-attestation-portable.o: src/target_attestation.c include/vitacheat/target_attestation.h Makefile | $(VITA_BUILD_DIR)
+	$(VITA_CC) $(VITA_PORTABLE_CFLAGS) -c $< -o $@
+
+$(VITA_BUILD_DIR)/target-attestation-fuzz-portable.o: tests/fuzz/fuzz_target_attestation.c include/vitacheat/target_attestation.h Makefile | $(VITA_BUILD_DIR)
 	$(VITA_CC) $(VITA_PORTABLE_CFLAGS) -c $< -o $@
 
 $(VITA_BUILD_DIR)/debugScreen.o: $(VITA_COMMON_DIR)/debugScreen.c $(VITA_COMMON_DIR)/debugScreen.h $(VITA_COMMON_DIR)/debugScreen_custom.h $(VITA_COMMON_DIR)/debugScreenFont.c Makefile | $(VITA_BUILD_DIR)

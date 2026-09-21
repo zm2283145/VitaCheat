@@ -13,6 +13,8 @@ enum {
 
 static void vc_menu_clear_configuration(
     vc_menu_coordinator *coordinator);
+static bool vc_menu_verify_target_attestation(
+    vc_menu_coordinator *coordinator);
 
 static bool vc_menu_dependencies_valid(
     const vc_menu_coordinator_dependencies *dependencies)
@@ -404,6 +406,7 @@ static bool vc_menu_validate_suspend_boundary(void *context)
     return vc_menu_capture_runtime(coordinator, &snapshot) &&
            vc_menu_runtime_matches_authorization(
                coordinator, &snapshot) &&
+           vc_menu_verify_target_attestation(coordinator) &&
            vc_menu_claimant_authority_matches(
                coordinator,
                VC_LAUNCH_CLAIMANT_STATUS_AUTHORIZATION_CONSUMED);
@@ -421,6 +424,29 @@ static bool vc_menu_verify_configured_ownership(
             &coordinator->target,
             coordinator->thread_ids,
             coordinator->thread_count);
+    vc_menu_adapter_end(coordinator);
+    return success;
+}
+
+static bool vc_menu_verify_target_attestation(
+    vc_menu_coordinator *coordinator)
+{
+    bool success;
+
+    if (coordinator->dependencies
+            .validate_target_attestation == NULL) {
+        return true;
+    }
+
+    vc_menu_adapter_begin(coordinator);
+    success = coordinator->dependencies
+                  .validate_target_attestation(
+                      coordinator->dependencies.context,
+                      &coordinator->target,
+                      coordinator->target_snapshot_revision,
+                      coordinator->thread_ids,
+                      coordinator->thread_count,
+                      &coordinator->protected_threads);
     vc_menu_adapter_end(coordinator);
     return success;
 }
@@ -783,6 +809,9 @@ static bool vc_menu_allowlist_locally_valid(
         allowlist->thread_count == 0 ||
         allowlist->thread_count > VC_PAUSE_MAX_THREADS ||
         allowlist->revision == 0 ||
+        (coordinator->dependencies
+                 .validate_target_attestation != NULL &&
+         allowlist->target_snapshot_revision == 0) ||
         allowlist->process_id !=
             coordinator->target.caller.process_id ||
         allowlist->process_generation !=
@@ -1000,6 +1029,7 @@ static void vc_menu_clear_configuration(
     memset(&coordinator->protected_threads, 0,
            sizeof(coordinator->protected_threads));
     coordinator->allowlist_revision = 0;
+    coordinator->target_snapshot_revision = 0;
     coordinator->thread_count = 0;
     coordinator->target_bound = false;
     coordinator->allowlist_configured = false;
@@ -1118,6 +1148,7 @@ vc_menu_coordinator_result vc_menu_coordinator_bind_target(
     coordinator->target_bound = true;
     coordinator->allowlist_configured = false;
     coordinator->allowlist_revision = 0;
+    coordinator->target_snapshot_revision = 0;
     coordinator->thread_count = 0;
     memset(coordinator->thread_ids, 0,
            sizeof(coordinator->thread_ids));
@@ -1183,6 +1214,8 @@ vc_menu_coordinator_result vc_menu_coordinator_configure_allowlist(
     coordinator->protected_threads =
         allowlist->protected_threads;
     coordinator->allowlist_revision = allowlist->revision;
+    coordinator->target_snapshot_revision =
+        allowlist->target_snapshot_revision;
     coordinator->allowlist_configured = true;
     vc_menu_set_status(
         coordinator, VC_MENU_COORDINATOR_STATUS_READY);
@@ -1318,6 +1351,33 @@ vc_menu_coordinator_result vc_menu_coordinator_begin_open(
     }
 
     coordinator->authorization_snapshot = inspected;
+    if (!vc_menu_capture_runtime(
+            coordinator, &runtime) ||
+        !vc_menu_runtime_matches_authorization(
+            coordinator, &runtime)) {
+        result = vc_menu_cleanup(
+            coordinator,
+            VC_MENU_COORDINATOR_STATUS_STALE,
+            VC_MENU_CLAIMANT_ACTION_CLOSE, false);
+        vc_menu_leave(coordinator);
+        return result ==
+                       VC_MENU_COORDINATOR_RESULT_CLEANUP_PENDING
+                   ? result
+                   : vc_menu_result(
+                         coordinator,
+                         VC_MENU_COORDINATOR_RESULT_STALE);
+    }
+    if (!vc_menu_verify_target_attestation(coordinator)) {
+        memset(&coordinator->authorization_snapshot, 0,
+               sizeof(coordinator->authorization_snapshot));
+        vc_menu_set_status(
+            coordinator,
+            VC_MENU_COORDINATOR_STATUS_ERROR);
+        vc_menu_leave(coordinator);
+        return vc_menu_result(
+            coordinator,
+            VC_MENU_COORDINATOR_RESULT_OWNERSHIP_FAILED);
+    }
     if (!vc_menu_capture_runtime(
             coordinator, &runtime) ||
         !vc_menu_runtime_matches_authorization(

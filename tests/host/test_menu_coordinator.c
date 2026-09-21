@@ -50,6 +50,7 @@ typedef struct fake_platform {
     unsigned int suspend_calls;
     unsigned int resume_calls;
     unsigned int ownership_calls;
+    unsigned int attestation_calls;
     unsigned int runtime_calls;
     unsigned int transport_calls;
     unsigned int unload_calls;
@@ -63,6 +64,8 @@ typedef struct fake_platform {
     fake_mutation runtime_mutation;
     vc_thread_id rejected_ownership_thread;
     bool ownership_ok;
+    bool attestation_ok;
+    bool attestation_enabled;
     bool runtime_ok;
     bool unload_ok;
     bool reenter;
@@ -372,6 +375,28 @@ static bool fake_verify_ownership(
     return platform->ownership_ok;
 }
 
+static bool fake_validate_target_attestation(
+    void *context,
+    const vc_launch_claimant_identity_snapshot *target,
+    uint64_t target_snapshot_revision,
+    const vc_thread_id *thread_ids,
+    size_t thread_count,
+    const vc_menu_protected_threads *protected_set)
+{
+    fake_platform *platform = (fake_platform *)context;
+
+    check_coordinator_adapter(platform);
+    ++platform->attestation_calls;
+    CHECK(target->caller.process_id == TARGET_PID);
+    CHECK(target->caller.process_generation ==
+          TARGET_GENERATION);
+    CHECK(target_snapshot_revision == UINT64_C(19));
+    CHECK(thread_ids != NULL && thread_count == 3);
+    CHECK(protected_set != NULL);
+    CHECK(protected_set->plugin_control_worker == 100);
+    return platform->attestation_ok;
+}
+
 static void record_event(fake_platform *platform,
                          char operation,
                          vc_thread_id thread_id)
@@ -457,6 +482,10 @@ static vc_menu_coordinator_dependencies coordinator_dependencies(
         fake_runtime_snapshot;
     dependencies.verify_thread_ownership =
         fake_verify_ownership;
+    if (platform->attestation_enabled) {
+        dependencies.validate_target_attestation =
+            fake_validate_target_attestation;
+    }
     dependencies.suspend_thread = fake_suspend;
     dependencies.resume_thread = fake_resume;
     dependencies.context = platform;
@@ -480,7 +509,9 @@ static vc_menu_thread_allowlist allowlist_for(
     return allowlist;
 }
 
-static void initialize_fixture(fixture *fixture_value)
+static void initialize_fixture_internal(
+    fixture *fixture_value,
+    bool attestation_enabled)
 {
     vc_launch_claimant_dependencies claimant_deps;
     vc_menu_coordinator_dependencies coordinator_deps;
@@ -495,6 +526,9 @@ static void initialize_fixture(fixture *fixture_value)
     fixture_value->platform.allowlist_revision =
         ALLOWLIST_REVISION;
     fixture_value->platform.ownership_ok = true;
+    fixture_value->platform.attestation_ok = true;
+    fixture_value->platform.attestation_enabled =
+        attestation_enabled;
     fixture_value->platform.runtime_ok = true;
     fixture_value->platform.unload_ok = true;
     set_ready_observation(&fixture_value->platform);
@@ -530,9 +564,17 @@ static void initialize_fixture(fixture *fixture_value)
     allowlist = allowlist_for(
         gameplay_threads,
         sizeof(gameplay_threads) / sizeof(gameplay_threads[0]));
+    if (attestation_enabled) {
+        allowlist.target_snapshot_revision = UINT64_C(19);
+    }
     CHECK(vc_menu_coordinator_configure_allowlist(
               &fixture_value->coordinator, &allowlist) ==
           VC_MENU_COORDINATOR_RESULT_OK);
+}
+
+static void initialize_fixture(fixture *fixture_value)
+{
+    initialize_fixture_internal(fixture_value, false);
 }
 
 static void authorize(fixture *fixture_value)
@@ -1259,6 +1301,32 @@ static void test_reset_and_formatter(void)
     CHECK(strstr(large, "10") == NULL);
 }
 
+static void test_optional_target_attestation_gate(void)
+{
+    fixture fixture_value;
+
+    initialize_fixture_internal(&fixture_value, true);
+    authorize(&fixture_value);
+    fixture_value.platform.attestation_ok = false;
+    CHECK(vc_menu_coordinator_begin_open(
+              &fixture_value.coordinator,
+              fixture_value.platform.now_ms,
+              1000, 100, &fixture_value.lease) ==
+          VC_MENU_COORDINATOR_RESULT_OWNERSHIP_FAILED);
+    CHECK(fixture_value.platform.attestation_calls == 1);
+    CHECK(fixture_value.platform.ownership_calls == 0);
+    CHECK(fixture_value.platform.suspend_calls == 0);
+
+    fixture_value.platform.attestation_ok = true;
+    CHECK(vc_menu_coordinator_begin_open(
+              &fixture_value.coordinator,
+              fixture_value.platform.now_ms,
+              1000, 100, &fixture_value.lease) ==
+          VC_MENU_COORDINATOR_RESULT_OK);
+    CHECK(fixture_value.platform.attestation_calls > 1);
+    CHECK(fixture_value.platform.ownership_calls != 0);
+}
+
 int main(void)
 {
     test_happy_path_and_lease_replay();
@@ -1270,6 +1338,7 @@ int main(void)
     test_ack_timeout_clock_and_identity_cleanup();
     test_exit_stop_unload_and_failed_resume();
     test_reset_and_formatter();
+    test_optional_target_attestation_gate();
 
     if (failures != 0) {
         fprintf(stderr,

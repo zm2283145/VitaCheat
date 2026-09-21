@@ -32,6 +32,20 @@ jobs:
       - name: Test MSVC build
         run: ctest --test-dir build-msvc -C Debug --output-on-failure
 
+  analyzer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure GCC analyzer
+        run: >-
+          cmake -S . -B build-analyzer -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER=gcc
+          -DVITACHEAT_ENABLE_ANALYZER=ON
+          -DBUILD_TESTING=OFF
+      - name: Run GCC analyzer
+        run: cmake --build build-analyzer --target vitacheat_core --parallel
+
   sanitizer-and-fuzz:
     runs-on: ubuntu-latest
     steps:
@@ -59,3 +73,5 @@ jobs:
         run: ./build-sanitize/vitacheat_launch_claimant_fuzzer -runs=10000 -max_len=512
       - name: Run bounded menu coordinator fuzzer
         run: ./build-sanitize/vitacheat_menu_coordinator_fuzzer -runs=10000 -max_len=512
+      - name: Run bounded target attestation fuzzer
+        run: ./build-sanitize/vitacheat_target_attestation_fuzzer -runs=10000 -max_len=640

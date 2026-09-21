@@ -24,6 +24,12 @@ or memory authority is present. The portable Quick Menu launcher controller
 likewise acts only through injected UI, worker, snapshot, clock, and transport
 callbacks and has no native SceShell or kernel dependency.
 
+The target-attestation component likewise has no read syscall or enumeration
+authority. It copies bounded facts from injected begin/module/thread/end
+callbacks, detects mutation, validates the complete candidate, and publishes
+only immutable local revisions. Its range API returns symbolic
+module/segment/offset metadata and never dereferences an address.
+
 ## Authority model
 
 - Read discovery, snapshot capture, writes, and persistent freezes are separate
@@ -165,16 +171,19 @@ callbacks and has no native SceShell or kernel dependency.
 
 The portable broker/ABI, launch-only service policy, add-on controller, game
 claimant/open-authorization lifecycle, and authorization-to-pause/menu-lease
-coordinator are implemented. Native QuickMenuReborn widgets remain blocked
-because the pinned public API has no runtime version query, and native service
-transport remains blocked because QuickMenuReborn documents no kernel bridge.
-Public taiHEN lifecycle/hook APIs do not by themselves provide the required
-authoritative foreground, system overlay, universal presentation, and
-title-specific gameplay-thread facts. SceShell hooks, Vita service
-syscalls/exports, concrete caller identity derivation, native injection,
-renderer/input/menu hooks, allowlist acquisition, bounded memory access, and
-cleanup hardware gates remain unavailable; no firmware-offset fallback is
-permitted.
+coordinator are implemented. The portable target snapshot, exact build/module
+policy, thread ownership query, and checked symbolic range foundation are also
+implemented, including an optional coordinator revision gate. Native
+QuickMenuReborn widgets remain blocked because the pinned public API has no
+runtime version query, and native service transport remains blocked because
+QuickMenuReborn documents no kernel bridge. Public taiHEN lifecycle/hook APIs
+do not by themselves provide the required authoritative foreground, system
+overlay, universal presentation, process/module load generations, measured
+fingerprints, segment catalog, or title-specific gameplay-thread facts.
+SceShell hooks, Vita service syscalls/exports, concrete caller identity
+derivation, native injection, renderer/input/menu hooks, allowlist acquisition,
+read-only memory access, and cleanup hardware gates remain unavailable; no
+firmware-offset fallback is permitted.
 
 ## Menu pause rules
 
@@ -193,24 +202,34 @@ permitted.
 
 ## Memory rules
 
-- Regions must be enumerated and allowlisted before access.
-- Address, length, alignment, and overflow checks happen before any access.
+- Trusted modules and segments must be enumerated into one complete immutable
+  snapshot before any future access.
+- The portable resolver already rejects zero lengths, 32-bit end overflow,
+  cross-segment spans, holes, stale revisions/load generations, unknown
+  permission bits, and insufficient permissions before returning symbolic
+  module/segment/offset metadata.
+- A future memory service must consume that checked metadata and independently
+  preserve exact snapshot lineage; the current API performs no read or write.
 - Cheats use typed, module-relative operations rather than unbounded scripts.
-- Build-identity mismatches fail before reads are interpreted or writes are
-  offered.
+- Exact title and any required version, opaque measured fingerprint, and module
+  load-generation facts must match before reads are interpreted or writes are
+  offered. Missing required fingerprint facts fail closed.
 - Active writes retain enough original state for bounded cleanup where
   restoration remains valid.
 
 The first foreign-process write gate is reserved for the user's offline
-US Ratchet & Clank Collection (`PCSA00133`) test. Its upstream first-game bolt
-entry is a chained `$B200` module-base selector plus `$0100` typed write, not a
-standalone direct address. Neither a matching cheat name nor the legacy chain
+US Ratchet & Clank Collection (`PCSA00133`) version `1.00` test. Its upstream
+first-game bolt entry is a chained `$B200` module-base selector plus `$0100`
+typed write, not a standalone direct address. Host target-policy fixtures use
+explicitly test-only fingerprint/module/segment values and are not assertions
+about any retail build. Neither a matching display string nor the legacy chain
 is sufficient authority: both record semantics and sequence scope must be
-implemented independently, and the installed title ID, region, version, module
-identity, process generation, resolved writable region, and typed operation
-must all match. The gate is a one-shot reversible bolt-count write with an
-original-value ledger; freezing and saving the modified value remain disabled
-until cleanup behavior is proven.
+implemented independently, and the installed title ID, region, version,
+adapter-measured fingerprint, module identity/load generation, process
+generation, resolved writable segment, and typed operation must all match. The
+gate is a one-shot reversible bolt-count write with an original-value ledger;
+freezing and saving the modified value remain disabled until read-only access
+and cleanup behavior are proven.
 
 ## Local-network protocol
 
