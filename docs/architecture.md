@@ -52,15 +52,34 @@ The current adapter remains a buffer-only Vita self-test. Cross-process access,
 kernel hooks, user-plugin injection, and overlay rendering are later milestones
 with their own threat models and hardware evidence.
 
-## Future injected in-game menu
+## Future Quick Menu launcher and injected in-game menu
 
-The injected user plugin owns controller polling, display hooks, menu rendering,
-search state, configuration, and on-device approval. The five-second Select
-hold remains the menu trigger. Before the menu becomes interactive, it requests
-that the kernel service construct an explicit allowlist of gameplay threads for
-the current process generation and suspend them through the portable pause
-transaction. The injected plugin, input hook, display hook, menu renderer,
-watchdog, and cleanup execution paths must never be included in that list.
+A small user module loaded by QuickMenuReborn in `SceShell` registers a native
+**Open VitaCheat** button and a bounded status label. Its callback may only ask
+the kernel service to create one pending launch request for the current
+foreground title generation. The request has a unique ID, short expiry, and no
+read, pause, write, or freeze capability. Duplicate requests are idempotent;
+foreground-title changes and expiry discard them.
+
+The QuickMenuReborn public widget API is preferred over direct SceShell offset
+patching. The add-on uses weak imports, registers all widgets and textures
+during start, and unregisters each resource before stop. If the pinned
+QuickMenuReborn interface is unavailable, the launcher reports unavailable and
+does not attempt an undocumented fallback.
+
+The injected game plugin owns display hooks, menu rendering/navigation, search
+state, configuration, and on-device approval. It can claim a pending request
+only when its caller process and generation match. It waits until the system UI
+overlay has closed and a supported presentation path has resumed before
+opening the menu. The existing five-second Select helper remains available for
+the standalone self-test and recovery experiments, not as the planned
+production launcher.
+
+Before the menu becomes interactive, the game plugin requests that the kernel
+service construct an explicit allowlist of gameplay threads for the current
+process generation and suspend them through the portable pause transaction.
+The injected plugin, input path, display hook, menu renderer, watchdog, and
+cleanup execution paths must never be included in that list.
 
 Menu close, timeout, title exit, plugin stop, and recoverable errors all request
 reverse-order resume. A failed resume remains owned and retryable; a process
@@ -72,6 +91,10 @@ A cross-title overlay is not assumed to be universal. Games can use different
 display paths and timing behavior, so each supported user-mode hook path needs a
 fail-closed compatibility gate. Until those gates exist, the repository must
 not claim that the menu works in every game.
+
+The full cheat browser does not run inside `SceShell`. Keeping the shell add-on
+to one button and status surface limits shell-wide failure impact and avoids
+giving the system process direct game-memory authority.
 
 ## Future PC companion
 
@@ -113,6 +136,10 @@ for this implementation:
   That scheduler-starvation approach is intentionally not reused.
 - rinCheat is GPLv3. The VitaCheat archive has no detected license, so its
   binaries, font, assets, and implementation remain clean-room references only.
+- QuickMenuReborn and FTP for Vita are MIT-licensed references for public widget
+  registration, callbacks, worker separation, and symmetric cleanup.
+  QuickMenuPlus is GPLv3 and uses firmware-specific SceShell offsets; it is a
+  behavioral compatibility reference only, not an implementation source.
 
 PSP and PS1 titles running inside the Vita's PSP emulator are a separate later
 research target. A Vita kernel plugin may be required to locate or cooperate

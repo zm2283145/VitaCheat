@@ -101,26 +101,36 @@ contains exact artifact hashes and the retained result screenshot.
 
 The selected device design is hybrid. A capability-limited kernel service owns
 only target lifecycle, cooperative thread-pause operations, and bounded
-cross-process memory access. An injected user-mode plugin owns controller
-polling, display hooks, menu rendering, search state, and user approval:
+cross-process memory access. A small QuickMenuReborn add-on in `SceShell`
+provides the native **Open VitaCheat** launcher and status. An injected user-mode
+game plugin owns menu navigation, display hooks, rendering, search state, and
+user approval:
 
 ```text
-injected user menu                     optional PC companion
-        |                                        |
-        +--------- bounded request ABI ----------+
-                             |
-              capability-checked kernel service
-                             |
-      target generation + pause/write ownership
-                             |
-                  portable vitacheat_core
+SceShell Quick Menu add-on             optional PC companion
+             |                                  |
+             +---- bounded, typed request ABI --+
+                                |
+                 capability-checked kernel service
+                                |
+          foreground title generation + request broker
+                                |
+                    injected game user plugin
+                                |
+             pause ownership + portable core
 ```
 
-The menu will retain the tested five-second Select hold. Opening it may suspend
-only an explicit allowlist of gameplay threads; the hook, input, rendering,
-watchdog, and cleanup paths must remain runnable. A generic cross-title overlay
-is still an unproven compatibility target and will not be claimed until
-renderer hooks and cleanup pass hardware gates.
+Pressing the Quick Menu button creates only a short-lived request bound to the
+current foreground title generation. It does not pause or write game memory
+from `SceShell`. After the system overlay closes, the matching injected game
+plugin claims the request, validates compatibility, and opens VitaCheat. Only
+then may it request suspension of an explicit gameplay-thread allowlist; the
+plugin, input, rendering, watchdog, and cleanup paths remain runnable.
+
+The existing five-second Select state machine remains a tested self-test and
+recovery component, but is no longer the planned production launcher. A generic
+cross-title overlay is still unproven and will not be claimed until renderer
+hooks and cleanup pass hardware gates.
 
 The online database will supply bounded declarative records, never executable
 scripts. The kernel service must expose a narrow versioned ABI and pass a
@@ -186,6 +196,14 @@ Those projects are behavioral references only. rinCheat is GPLv3, while the
 VitaCheat binary archive has no detected source license. This repository does
 not copy their implementations, assets, fonts, or binaries. See the
 [architecture notes](docs/architecture.md#legacy-plugin-findings).
+
+Quick Menu integration will target the MIT-licensed
+[QuickMenuReborn](https://github.com/Ibrahim778/QuickMenuReborn) public widget
+API. [FTP for Vita](https://github.com/M-Essa11/FTP-for-Vita) demonstrates a
+clean register/callback/unregister lifecycle for an add-on. GPLv3
+[QuickMenuPlus](https://github.com/PsArchive/QuickMenuPlus) is used only as a
+behavioral reference; VitaCheat will not copy its firmware-specific SceShell
+patches.
 
 ## Compatibility
 

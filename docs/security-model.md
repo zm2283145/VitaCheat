@@ -29,6 +29,22 @@ enumerate or suspend a real thread on its own.
 - Every operation is scoped to one process generation and verified module
   identity.
 
+## Quick Menu launcher
+
+- The `SceShell` add-on has a launch-only role. It cannot read game memory,
+  suspend threads, arm writes, apply cheats, or freeze values.
+- A launch request is bound by the kernel service to the current foreground
+  process generation, assigned a unique ID, and expires quickly.
+- The injected game plugin may claim a request only when its caller process and
+  generation match. A title switch, process exit, duplicate claim, timeout, or
+  plugin unload invalidates it.
+- Thread suspension begins only after the system Quick Menu has closed and the
+  game plugin has revalidated its presentation path and target generation.
+- Missing or incompatible QuickMenuReborn support fails closed; VitaCheat does
+  not patch unknown SceShell offsets as a fallback.
+- All Quick Menu widgets, event handlers, textures, and worker state have
+  symmetric stop cleanup.
+
 ## Menu pause rules
 
 - Only a bounded, explicit allowlist of gameplay threads may be suspended.

@@ -62,8 +62,12 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
 - [x] Define and host-test bounded, generation-bound gameplay-thread pause
       ownership with reverse rollback, retryable cleanup, and forced expiry.
 - [ ] Search, refine, cancel, sort, and inspect candidates on Vita.
-- [ ] Feed Vita controller samples into the tested five-second Select trigger
-      and render the menu only after its one-shot event.
+- [ ] Add a QuickMenuReborn `SceShell` add-on with an **Open VitaCheat** button,
+      foreground-title status, and symmetric widget/texture cleanup.
+- [ ] Send only a short-lived, generation-bound open request from the Quick Menu;
+      never grant it read, pause, write, or freeze authority.
+- [ ] Let the matching injected game plugin claim the request after the system
+      overlay closes, then render the menu only after compatibility checks pass.
 - [ ] In the kernel adapter, build an explicit gameplay-thread allowlist that
       excludes the injected menu, input, renderer, watchdog, and cleanup paths.
 - [ ] Couple menu open/close to transactional pause/resume and refuse to open
@@ -119,10 +123,13 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
 - [ ] Implement a narrow kernel service for target lifecycle, cooperative
       thread control, and bounded cross-process memory access without exposing
       general arbitrary kernel read/write operations.
-- [ ] Implement an injected user plugin for the five-second Select trigger,
-      display hook, menu rendering, search state, and user approvals.
+- [ ] Implement a QuickMenuReborn add-on in `SceShell` for native launch/status
+      widgets, with a weak/optional dependency and a pinned compatibility gate.
+- [ ] Implement an injected game user plugin for request claiming, display
+      hooks, menu rendering/navigation, search state, and user approvals.
 - [ ] Define a versioned, bounded request ABI between the user plugin and kernel
-      service with caller, process-generation, capability, and size checks.
+      service plus a launch-only SceShell role, with caller, process-generation,
+      capability, request-ID, expiry, and size checks.
 - [ ] Keep parsing, rendering, protocol handling, and database logic out of
       kernel context.
 - [ ] Validate process-generation binding, unload, title exit, suspend/resume,
