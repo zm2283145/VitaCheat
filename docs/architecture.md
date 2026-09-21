@@ -15,7 +15,7 @@ Offsets are 32-bit and relative to a region selected by a future adapter. The
 adapter, not the search engine, will map a result to a verified process, module,
 build identity, region, and ASLR placement.
 
-The portable core also owns two authority-free helpers:
+The portable core also owns authority-free helpers:
 
 - a legacy `.psv` syntax indexer that holds views into caller-owned source and
   conservatively maps only independently documented operations; and
@@ -23,11 +23,44 @@ The portable core also owns two authority-free helpers:
   continuous seconds and rearms only after release;
 - a bounded pause-ownership transaction that operates only through adapter
   callbacks, rolls back partial suspension in reverse order, binds cleanup to
-  one process generation, and retains failed resumes for retry.
+  one process generation, and retains failed resumes for retry; and
+- a bounded Quick Menu launch broker with a fixed little-endian byte ABI,
+  explicit caller roles/capabilities, one pending request, and retained terminal
+  status.
 
 None of these helpers reads controller hardware, enumerates or suspends threads,
 opens files, renders UI, or writes memory. Those responsibilities remain in
 adapters with separately testable authority.
+
+### Portable Quick Menu broker and v1 ABI
+
+`include/vitacheat/launch_broker.h` separates native C commands from a fixed
+byte boundary. Requests are exactly 64 bytes and responses are exactly 72 bytes;
+the codecs read and write each little-endian integer explicitly and reject
+unsupported versions, truncated or oversized envelopes, mismatched size
+fields, unknown enum/capability values, nonzero reserved fields, unused
+operation fields, invalid identities, and timestamp overflow before dispatch.
+
+The broker owns one request because only the current foreground title can be
+launched. It retains that request's terminal state so claimed, expired,
+cancelled, stale, and clock-rollback results cannot become pending again. A
+caller-supplied nonzero counter seed produces strictly increasing IDs; the
+counter never wraps, and exhaustion is explicit. Duplicate submissions for the
+same active process generation return the original ID and deadline.
+
+The native lifecycle surface covers foreground-generation changes, process
+exit, plugin unload, service reset/unload, and monotonic expiry ticks. The
+request surface covers submit, claim, cancel, and status. `SceShell` can submit
+with only `LAUNCH` and query with only `STATUS`; it cannot claim or cancel. The
+game plugin can claim only with `CLAIM`, after explicitly reporting
+presentation readiness, and can cancel only with `CANCEL`. Every request ID,
+process ID, and nonzero generation must match.
+
+This is serialization, validation, and pure state only. It does not authenticate
+a real Vita caller or provide a syscall, hook, widget, injection path,
+cross-process operation, thread control, firmware offset, or hardware access.
+Those are adapter milestones and must derive caller identity rather than trust
+wire fields.
 
 The portable target contract is C11 plus an integer pointer type (`uintptr_t`)
 wide enough to represent object ranges. That holds for the supported Windows
@@ -52,7 +85,7 @@ The current adapter remains a buffer-only Vita self-test. Cross-process access,
 kernel hooks, user-plugin injection, and overlay rendering are later milestones
 with their own threat models and hardware evidence.
 
-## Future Quick Menu launcher and injected in-game menu
+## Future native Quick Menu launcher and injected in-game menu
 
 A small user module loaded by QuickMenuReborn in `SceShell` registers a native
 **Open VitaCheat** button and a bounded status label. Its callback may only ask
@@ -60,6 +93,10 @@ the kernel service to create one pending launch request for the current
 foreground title generation. The request has a unique ID, short expiry, and no
 read, pause, write, or freeze capability. Duplicate requests are idempotent;
 foreground-title changes and expiry discard them.
+
+The portable broker and v1 ABI implementing these rules are present. The
+QuickMenuReborn widget, SceShell transport, caller-authenticating kernel adapter,
+and injected game plugin described below are not.
 
 The QuickMenuReborn public widget API is preferred over direct SceShell offset
 patching. The add-on uses weak imports, registers all widgets and textures

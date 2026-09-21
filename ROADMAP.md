@@ -14,6 +14,8 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
 - [x] Preserve unsupported legacy codes as opaque records without executing
       guessed behavior.
 - [x] Portable, debounced five-second Select-hold activation state machine.
+- [x] Versioned little-endian Quick Menu launch ABI and allocation-free,
+      generation-bound single-request broker.
 - [x] Add sanitizer, fuzz, and property-based CI coverage.
 - [ ] Add snapshot/session file formats with strict version and size limits.
 
@@ -64,6 +66,9 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
 - [ ] Search, refine, cancel, sort, and inspect candidates on Vita.
 - [ ] Add a QuickMenuReborn `SceShell` add-on with an **Open VitaCheat** button,
       foreground-title status, and symmetric widget/texture cleanup.
+- [x] Host-test the launch-only SceShell role, exact game-plugin claim binding,
+      overlay-readiness gate, expiry, lifecycle invalidation, and nonrepeating
+      request IDs without adding native adapters.
 - [ ] Send only a short-lived, generation-bound open request from the Quick Menu;
       never grant it read, pause, write, or freeze authority.
 - [ ] Let the matching injected game plugin claim the request after the system
@@ -127,9 +132,10 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
       widgets, with a weak/optional dependency and a pinned compatibility gate.
 - [ ] Implement an injected game user plugin for request claiming, display
       hooks, menu rendering/navigation, search state, and user approvals.
-- [ ] Define a versioned, bounded request ABI between the user plugin and kernel
-      service plus a launch-only SceShell role, with caller, process-generation,
-      capability, request-ID, expiry, and size checks.
+- [x] Define and host-test a versioned, bounded request ABI for the future user
+      plugin/kernel-service boundary plus a launch-only SceShell role, with
+      caller, process-generation, capability, request-ID, expiry, and size
+      checks. Native transport and caller-identity adapters remain unimplemented.
 - [ ] Keep parsing, rendering, protocol handling, and database logic out of
       kernel context.
 - [ ] Validate process-generation binding, unload, title exit, suspend/resume,

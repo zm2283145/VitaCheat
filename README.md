@@ -8,7 +8,8 @@ online community database.
 This repository is an early scaffold. The current code is a portable,
 allocation-free memory snapshot search/refinement core, a lossless legacy
 VitaCheat `.psv` importer, and a deterministic menu-activation state machine,
-plus a transactional gameplay-thread pause coordinator, all with host tests. A
+plus a transactional gameplay-thread pause coordinator and a versioned,
+allocation-free Quick Menu launch-request broker, all with host tests. A
 separate ordinary user-mode Vita self-test now exercises the scanner and
 five-second Select menu against memory owned by that test app. It is not a
 plugin and does not attach to a process, suspend another application's threads,
@@ -67,10 +68,18 @@ The same portable milestone now also:
 - rolls back partial suspension in reverse order and retains only failed cleanup
   ownership for an explicit retry;
 - rejects stale process generations and forces cleanup after a bounded menu
-  deadline or monotonic-clock rollback.
+  deadline or monotonic-clock rollback;
+- encodes and decodes a fixed little-endian v1 Quick Menu ABI without packed
+  structs or host-endian assumptions;
+- holds at most one short-lived launch request for the current foreground
+  process generation, with deterministic nonrepeating request IDs;
+- limits `SceShell` to idempotent launch submission and bounded status while
+  only the exactly matching game plugin can claim or cancel;
+- records overlay readiness explicitly and invalidates requests on expiry,
+  clock rollback, title/process changes, plugin unload, cancel, or reset.
 
-The pause coordinator has no thread authority by itself; no imported operation
-is executed in this milestone. See
+The pause coordinator and launch broker have no platform authority by
+themselves; no imported operation is executed in this milestone. See
 [docs/legacy-psv-compatibility.md](docs/legacy-psv-compatibility.md).
 
 The first Vita-facing build is the deliberately unprivileged and now
@@ -130,7 +139,9 @@ plugin, input, rendering, watchdog, and cleanup paths remain runnable.
 The existing five-second Select state machine remains a tested self-test and
 recovery component, but is no longer the planned production launcher. A generic
 cross-title overlay is still unproven and will not be claimed until renderer
-hooks and cleanup pass hardware gates.
+hooks and cleanup pass hardware gates. The portable broker and byte ABI are now
+implemented; the QuickMenuReborn add-on, kernel/user adapters, injected plugin,
+and all Vita-native transport are not.
 
 The online database will supply bounded declarative records, never executable
 scripts. The kernel service must expose a narrow versioned ABI and pass a
@@ -167,9 +178,9 @@ cmake --build build-sanitize
 ctest --test-dir build-sanitize --output-on-failure
 ```
 
-For bounded libFuzzer coverage of arbitrary search inputs and refinement
-sequences, add `-DVITACHEAT_BUILD_FUZZERS=ON` and run
-`build-sanitize/vitacheat_search_fuzzer -runs=10000 -max_len=520`.
+For bounded libFuzzer coverage, add `-DVITACHEAT_BUILD_FUZZERS=ON` and run
+`build-sanitize/vitacheat_search_fuzzer -runs=10000 -max_len=520` plus
+`build-sanitize/vitacheat_launch_broker_fuzzer -runs=10000 -max_len=512`.
 
 VitaSDK is not required to build and run the host tests. Building the Vita
 self-test VPK does require VitaSDK.
@@ -218,15 +229,20 @@ listed only after their own gates pass.
 - `include/vitacheat/legacy_psv.h` — bounded lossless legacy importer API.
 - `include/vitacheat/menu_activation.h` — portable Select-hold state machine.
 - `include/vitacheat/pause.h` — bounded pause ownership and cleanup contract.
+- `include/vitacheat/launch_broker.h` — v1 byte ABI and launch broker contract.
 - `src/search.c` — portable little-endian implementation.
 - `src/legacy_psv.c` — syntax indexing and conservative operation mapping.
 - `src/menu_activation.c` — five-second one-shot activation logic.
 - `src/pause.c` — transactional suspend, rollback, resume, and expiry logic.
+- `src/launch_broker.c` — little-endian codec and launch-request state machine.
 - `tests/host/test_search.c` — native behavioral and boundary tests.
 - `tests/host/test_legacy_psv.c` — mixed-format, truncation, and fail-closed
   importer tests.
 - `tests/host/test_menu_activation.c` — hold, release, and clock-reset tests.
 - `tests/host/test_pause.c` — pause ownership, rollback, retry, and expiry tests.
+- `tests/host/test_launch_broker.c` — ABI vectors, authority, lifecycle, and
+  bounded state-sequence tests.
+- `tests/fuzz/fuzz_launch_broker.c` — bounded codec/dispatch/lifecycle fuzzer.
 - `vita-self-test/` — ordinary user-mode on-device menu and owned-buffer probe.
 - `docs/architecture.md` — component boundaries and data flow.
 - `docs/legacy-psv-compatibility.md` — compatibility guarantees and limits.

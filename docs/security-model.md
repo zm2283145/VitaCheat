@@ -16,7 +16,9 @@ modifier taints the complete cheat entry so a later direct-write record cannot
 be executed out of sequence. The five-second Select helper consumes only a
 button state and timestamp; it grants no memory capability by itself. The
 portable pause coordinator calls only adapter-supplied operations and cannot
-enumerate or suspend a real thread on its own.
+enumerate or suspend a real thread on its own. The portable Quick Menu broker
+similarly validates and serializes launch state but has no syscall, caller
+authentication, process discovery, hook, injection, or memory authority.
 
 ## Authority model
 
@@ -31,19 +33,32 @@ enumerate or suspend a real thread on its own.
 
 ## Quick Menu launcher
 
+- The implemented v1 byte ABI uses exact 64-byte requests and 72-byte responses,
+  explicit little-endian fields, fixed version/size checks, zeroed reserved
+  fields, and operation-specific payload validation.
 - The `SceShell` add-on has a launch-only role. It cannot read game memory,
-  suspend threads, arm writes, apply cheats, or freeze values.
+  suspend threads, claim/cancel as a game, arm writes, apply cheats, or freeze
+  values.
 - A launch request is bound by the kernel service to the current foreground
-  process generation, assigned a unique ID, and expires quickly.
+  process generation, assigned a deterministic nonzero and nonwrapping unique
+  ID, and expires after at most 15 monotonic seconds.
 - The injected game plugin may claim a request only when its caller process and
-  generation match. A title switch, process exit, duplicate claim, timeout, or
-  plugin unload invalidates it.
+  generation and request ID match. A title switch, process exit, successful
+  claim, timeout, cancel, plugin unload, service reset, or monotonic-clock
+  rollback invalidates it.
+- One pending request is retained with an explicit terminal state. Duplicate
+  submissions for its target are idempotent and do not extend the deadline;
+  malformed, mismatched, or overprivileged calls cannot retarget it.
 - Thread suspension begins only after the system Quick Menu has closed and the
   game plugin has revalidated its presentation path and target generation.
 - Missing or incompatible QuickMenuReborn support fails closed; VitaCheat does
   not patch unknown SceShell offsets as a fallback.
 - All Quick Menu widgets, event handlers, textures, and worker state have
   symmetric stop cleanup.
+
+Only the portable broker/ABI is implemented. Native QuickMenuReborn widgets,
+SceShell hooks, service syscalls, caller identity derivation, game-plugin
+injection, and presentation adapters remain unavailable.
 
 ## Menu pause rules
 

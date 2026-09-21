@@ -10,10 +10,14 @@ SEARCH_TEST_BIN := $(BUILD_DIR)/vitacheat_host_tests
 PSV_TEST_BIN := $(BUILD_DIR)/vitacheat_psv_tests
 ACTIVATION_TEST_BIN := $(BUILD_DIR)/vitacheat_activation_tests
 PAUSE_TEST_BIN := $(BUILD_DIR)/vitacheat_pause_tests
-TEST_BINS := $(SEARCH_TEST_BIN) $(PSV_TEST_BIN) $(ACTIVATION_TEST_BIN) $(PAUSE_TEST_BIN)
-CORE_SOURCES := src/search.c src/legacy_psv.c src/menu_activation.c src/pause.c
+LAUNCH_BROKER_TEST_BIN := $(BUILD_DIR)/vitacheat_launch_broker_tests
+TEST_BINS := $(SEARCH_TEST_BIN) $(PSV_TEST_BIN) $(ACTIVATION_TEST_BIN) \
+	$(PAUSE_TEST_BIN) $(LAUNCH_BROKER_TEST_BIN)
+CORE_SOURCES := src/search.c src/legacy_psv.c src/menu_activation.c src/pause.c \
+	src/launch_broker.c
 HEADERS := include/vitacheat/search.h include/vitacheat/legacy_psv.h \
-	include/vitacheat/menu_activation.h include/vitacheat/pause.h
+	include/vitacheat/menu_activation.h include/vitacheat/pause.h \
+	include/vitacheat/launch_broker.h
 VITA_CC ?= arm-vita-eabi-gcc
 VITA_ELF_CREATE ?= vita-elf-create
 VITA_MAKE_FSELF ?= vita-make-fself
@@ -48,11 +52,15 @@ $(ACTIVATION_TEST_BIN): $(CORE_SOURCES) tests/host/test_menu_activation.c $(HEAD
 $(PAUSE_TEST_BIN): $(CORE_SOURCES) tests/host/test_pause.c $(HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(CORE_SOURCES) tests/host/test_pause.c -o $(PAUSE_TEST_BIN)
 
+$(LAUNCH_BROKER_TEST_BIN): $(CORE_SOURCES) tests/host/test_launch_broker.c $(HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(CORE_SOURCES) tests/host/test_launch_broker.c -o $(LAUNCH_BROKER_TEST_BIN)
+
 test: $(TEST_BINS)
 	./$(SEARCH_TEST_BIN)
 	./$(PSV_TEST_BIN)
 	./$(ACTIVATION_TEST_BIN)
 	./$(PAUSE_TEST_BIN)
+	./$(LAUNCH_BROKER_TEST_BIN)
 
 vita-self-test: $(VITA_BUILD_DIR)/vitacheat-self-test.vpk
 
