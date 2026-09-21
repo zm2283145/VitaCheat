@@ -29,3 +29,5 @@ jobs:
         run: ctest --test-dir build-sanitize --output-on-failure
       - name: Run bounded search fuzzer
         run: ./build-sanitize/vitacheat_search_fuzzer -runs=10000 -max_len=520
+      - name: Run bounded legacy planner fuzzer
+        run: ./build-sanitize/vitacheat_legacy_plan_fuzzer -runs=10000 -max_len=4096

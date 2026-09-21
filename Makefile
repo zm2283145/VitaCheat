@@ -8,12 +8,16 @@ CFLAGS += -std=c11 -Wall -Wextra -Werror -Wpedantic
 BUILD_DIR := build
 SEARCH_TEST_BIN := $(BUILD_DIR)/vitacheat_host_tests
 PSV_TEST_BIN := $(BUILD_DIR)/vitacheat_psv_tests
+LEGACY_PLAN_TEST_BIN := $(BUILD_DIR)/vitacheat_legacy_plan_tests
 ACTIVATION_TEST_BIN := $(BUILD_DIR)/vitacheat_activation_tests
 PAUSE_TEST_BIN := $(BUILD_DIR)/vitacheat_pause_tests
-TEST_BINS := $(SEARCH_TEST_BIN) $(PSV_TEST_BIN) $(ACTIVATION_TEST_BIN) $(PAUSE_TEST_BIN)
-CORE_SOURCES := src/search.c src/legacy_psv.c src/menu_activation.c src/pause.c
+TEST_BINS := $(SEARCH_TEST_BIN) $(PSV_TEST_BIN) $(LEGACY_PLAN_TEST_BIN) \
+	$(ACTIVATION_TEST_BIN) $(PAUSE_TEST_BIN)
+CORE_SOURCES := src/search.c src/legacy_psv.c src/legacy_plan.c \
+	src/menu_activation.c src/pause.c
 HEADERS := include/vitacheat/search.h include/vitacheat/legacy_psv.h \
-	include/vitacheat/menu_activation.h include/vitacheat/pause.h
+	include/vitacheat/legacy_plan.h include/vitacheat/menu_activation.h \
+	include/vitacheat/pause.h
 VITA_CC ?= arm-vita-eabi-gcc
 VITA_ELF_CREATE ?= vita-elf-create
 VITA_MAKE_FSELF ?= vita-make-fself
@@ -42,6 +46,9 @@ $(SEARCH_TEST_BIN): $(CORE_SOURCES) tests/host/test_search.c $(HEADERS) | $(BUIL
 $(PSV_TEST_BIN): $(CORE_SOURCES) tests/host/test_legacy_psv.c $(HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(CORE_SOURCES) tests/host/test_legacy_psv.c -o $(PSV_TEST_BIN)
 
+$(LEGACY_PLAN_TEST_BIN): $(CORE_SOURCES) tests/host/test_legacy_plan.c $(HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(CORE_SOURCES) tests/host/test_legacy_plan.c -o $(LEGACY_PLAN_TEST_BIN)
+
 $(ACTIVATION_TEST_BIN): $(CORE_SOURCES) tests/host/test_menu_activation.c $(HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(CORE_SOURCES) tests/host/test_menu_activation.c -o $(ACTIVATION_TEST_BIN)
 
@@ -51,6 +58,7 @@ $(PAUSE_TEST_BIN): $(CORE_SOURCES) tests/host/test_pause.c $(HEADERS) | $(BUILD_
 test: $(TEST_BINS)
 	./$(SEARCH_TEST_BIN)
 	./$(PSV_TEST_BIN)
+	./$(LEGACY_PLAN_TEST_BIN)
 	./$(ACTIVATION_TEST_BIN)
 	./$(PAUSE_TEST_BIN)
 

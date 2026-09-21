@@ -17,8 +17,11 @@ build identity, region, and ASLR placement.
 
 The portable core also owns two authority-free helpers:
 
-- a legacy `.psv` syntax indexer that holds views into caller-owned source and
-  conservatively maps only independently documented operations; and
+- a legacy `.psv` syntax indexer that holds views into caller-owned source,
+  plus a physical-record-safe compiler for documented non-pointer scalar
+  families;
+- a callback-driven evaluator that stages concrete little-endian actions,
+  followed by a separate bounded writer and reverse patch-ledger rollback;
 - a clock-driven Select-hold state machine that emits one event after five
   continuous seconds and rearms only after release;
 - a bounded pause-ownership transaction that operates only through adapter
@@ -26,8 +29,9 @@ The portable core also owns two authority-free helpers:
   one process generation, and retains failed resumes for retry.
 
 None of these helpers reads controller hardware, enumerates or suspends threads,
-opens files, renders UI, or writes memory. Those responsibilities remain in
-adapters with separately testable authority.
+opens files, renders UI, or owns process memory. The scalar executor can invoke
+only callbacks supplied by an adapter; no Vita or real-process adapter exists
+in the portable layer.
 
 The portable target contract is C11 plus an integer pointer type (`uintptr_t`)
 wide enough to represent object ranges. That holds for the supported Windows
@@ -90,7 +94,10 @@ generation no longer exists.
 A cross-title overlay is not assumed to be universal. Games can use different
 display paths and timing behavior, so each supported user-mode hook path needs a
 fail-closed compatibility gate. Until those gates exist, the repository must
-not claim that the menu works in every game.
+not claim that the menu works in every game. QuickMenuReborn is an additional
+system-wide dependency with its own firmware and coexistence matrix; absence or
+failure leaves VitaCheat inactive rather than falling back to private ShellUI
+hooks.
 
 The full cheat browser does not run inside `SceShell`. Keeping the shell add-on
 to one button and status surface limits shell-wide failure impact and avoids

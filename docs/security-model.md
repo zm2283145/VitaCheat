@@ -10,13 +10,19 @@ The current library cannot access a process, file, socket, or kernel API. It
 only searches byte arrays supplied by its caller. Output storage is also
 caller-owned and capacity bounded.
 
-The legacy `.psv` importer likewise only indexes caller-owned bytes. Unknown
-operations remain opaque, malformed lines remain visible, and one unsupported
-modifier taints the complete cheat entry so a later direct-write record cannot
-be executed out of sequence. The five-second Select helper consumes only a
-button state and timestamp; it grants no memory capability by itself. The
-portable pause coordinator calls only adapter-supplied operations and cannot
-enumerate or suspend a real thread on its own.
+The legacy `.psv` importer likewise only indexes caller-owned bytes. Its scalar
+compiler rejects a complete descriptor on unknown pointer/extension records,
+malformed multi-record spans, unsafe gate targets, or unapproved compatibility
+syntax. Evaluation can resolve bases, read up to four bytes, and sample a
+normalized button mask only through bounded callbacks; it performs no writes.
+Applying an evaluated plan requires a separate byte-write callback, and
+restorable patches retain original bytes in a caller-owned retryable ledger.
+No real-process implementation of those callbacks ships in this layer.
+
+The five-second Select helper consumes only a button state and timestamp; it
+grants no memory capability by itself. The portable pause coordinator calls
+only adapter-supplied operations and cannot enumerate or suspend a real thread
+on its own.
 
 ## Authority model
 
@@ -65,6 +71,8 @@ enumerate or suspend a real thread on its own.
 - Regions must be enumerated and allowlisted before access.
 - Address, length, alignment, and overflow checks happen before any access.
 - Cheats use typed, module-relative operations rather than unbounded scripts.
+- Repeat expansion is symbolically bounded before evaluation, and physical
+  gate counts cannot split a multi-record operation.
 - Build-identity mismatches fail before reads are interpreted or writes are
   offered.
 - Active writes retain enough original state for bounded cleanup where

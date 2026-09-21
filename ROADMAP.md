@@ -11,6 +11,10 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
 - [x] Deterministic host tests for ordinary and malformed inputs.
 - [x] Lossless, allocation-free legacy `.psv` syntax importer.
 - [x] Conservative typed mapping for documented direct 8/16/32-bit writes.
+- [x] Allocation-free scalar planning for MOV, repeat/compression, restorable
+      ARM patches, button gates, and documented unsigned conditions.
+- [x] Callback-only evaluation, symbolic expansion bounds, physical-record-safe
+      skips, original-patch ledger, and retryable reverse rollback.
 - [x] Preserve unsupported legacy codes as opaque records without executing
       guessed behavior.
 - [x] Portable, debounced five-second Select-hold activation state machine.
@@ -31,11 +35,11 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
 - [ ] Save and resume search sessions.
 - [ ] Finalize the versioned declarative cheat schema beyond the current
       versioned import representation.
-- [ ] Implement and test each remaining documented legacy VitaCheat code family
-      independently; keep unknown codes opaque indefinitely.
-- [x] Import and independently validate the `$B200` module-base selection
-      family, including chained-operation scope and malformed-sequence handling.
-      Runtime module resolution and write execution remain separate gates.
+- [ ] Implement pointer write/MOV/compression families 3, 8, and 7 through a
+      separate bounded layer; keep unknown codes opaque indefinitely.
+- [x] Import and independently validate z05/z06 `$B2MM` module-base selection,
+      including corrected module/segment fields, overwrite/reset scope, and
+      address snapshots. Real-process resolution remains a separate gate.
 - [ ] Add a conversion/export tool that proves byte-exact `.psv` round trips.
 - [ ] Bind every record to title ID, module identity, and module-relative
       offsets.

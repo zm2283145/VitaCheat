@@ -7,9 +7,9 @@ online community database.
 
 This repository is an early scaffold. The current code is a portable,
 allocation-free memory snapshot search/refinement core, a lossless legacy
-VitaCheat `.psv` importer, and a deterministic menu-activation state machine,
-plus a transactional gameplay-thread pause coordinator, all with host tests. A
-separate ordinary user-mode Vita self-test now exercises the scanner and
+VitaCheat `.psv` importer and scalar planner, a deterministic menu-activation
+state machine, plus a transactional gameplay-thread pause coordinator, all with
+host tests. A separate ordinary user-mode Vita self-test now exercises the scanner and
 five-second Select menu against memory owned by that test app. It is not a
 plugin and does not attach to a process, suspend another application's threads,
 read or write another application's memory, freeze values, connect over a
@@ -50,11 +50,20 @@ The same portable milestone now also:
 
 - indexes legacy `.psv` comments, `_V0`/`_V1` entries, and code records while
   retaining byte-exact source spans, including original line endings;
-- recognizes only the documented `$0000`, `$0100`, and `$0200` direct-write
-  forms as typed 8/16/32-bit operations;
-- recognizes a strictly bounded `$B200` module/segment selector only when it is
-  the first operation in a cheat and scopes following typed writes as relative;
-- marks duplicate, late, out-of-range, or dangling `$B200` sequences malformed;
+- compiles direct writes, MOV, two-record repeat/compression, restorable ARM
+  patches, button gates, and all documented unsigned condition relations into
+  typed allocation-free plans;
+- interprets z06 `$B2MM SSSSSSSS 00000000` correctly, snapshots module/segment
+  state onto every address-bearing node, and permits bounded mid-descriptor
+  selector overwrite;
+- validates physical-record gate targets so a skip cannot expose a repeat
+  continuation as a top-level record;
+- evaluates plans through bounded module-resolution, byte-read, and normalized
+  button callbacks before applying concrete actions through a separate write
+  callback;
+- captures original patch bytes and exposes reverse-order, retryable rollback;
+- keeps pointer families 3, 8, and 7 opaque and rejects their complete
+  descriptor rather than exposing later scalar records;
 - preserves every other syntactically valid code as opaque data instead of
   guessing its meaning;
 - reports malformed records, truncation, and legacy format-limit violations;
@@ -69,8 +78,8 @@ The same portable milestone now also:
 - rejects stale process generations and forces cleanup after a bounded menu
   deadline or monotonic-clock rollback.
 
-The pause coordinator has no thread authority by itself; no imported operation
-is executed in this milestone. See
+Neither the pause coordinator nor scalar planner has process authority by
+itself, and no real-process memory adapter ships in this milestone. See
 [docs/legacy-psv-compatibility.md](docs/legacy-psv-compatibility.md).
 
 The first Vita-facing build is the deliberately unprivileged and now
@@ -167,9 +176,9 @@ cmake --build build-sanitize
 ctest --test-dir build-sanitize --output-on-failure
 ```
 
-For bounded libFuzzer coverage of arbitrary search inputs and refinement
-sequences, add `-DVITACHEAT_BUILD_FUZZERS=ON` and run
-`build-sanitize/vitacheat_search_fuzzer -runs=10000 -max_len=520`.
+For bounded libFuzzer coverage, add `-DVITACHEAT_BUILD_FUZZERS=ON`. The build
+provides `vitacheat_search_fuzzer` for search inputs and
+`vitacheat_legacy_plan_fuzzer` for lossless import and descriptor compilation.
 
 VitaSDK is not required to build and run the host tests. Building the Vita
 self-test VPK does require VitaSDK.
@@ -216,15 +225,19 @@ listed only after their own gates pass.
 
 - `include/vitacheat/search.h` — public bounded search/refinement API.
 - `include/vitacheat/legacy_psv.h` — bounded lossless legacy importer API.
+- `include/vitacheat/legacy_plan.h` — typed scalar compile/evaluate/apply API.
 - `include/vitacheat/menu_activation.h` — portable Select-hold state machine.
 - `include/vitacheat/pause.h` — bounded pause ownership and cleanup contract.
 - `src/search.c` — portable little-endian implementation.
 - `src/legacy_psv.c` — syntax indexing and conservative operation mapping.
+- `src/legacy_plan.c` — physical-record-safe planning and callback execution.
 - `src/menu_activation.c` — five-second one-shot activation logic.
 - `src/pause.c` — transactional suspend, rollback, resume, and expiry logic.
 - `tests/host/test_search.c` — native behavioral and boundary tests.
 - `tests/host/test_legacy_psv.c` — mixed-format, truncation, and fail-closed
   importer tests.
+- `tests/host/test_legacy_plan.c` — scalar semantics, gates, bounds, and
+  restoration tests.
 - `tests/host/test_menu_activation.c` — hold, release, and clock-reset tests.
 - `tests/host/test_pause.c` — pause ownership, rollback, retry, and expiry tests.
 - `vita-self-test/` — ordinary user-mode on-device menu and owned-buffer probe.

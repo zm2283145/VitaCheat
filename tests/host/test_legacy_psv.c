@@ -125,18 +125,18 @@ static void test_modifier_taints_complete_cheat(void)
 
     CHECK(vc_psv_parse(source, sizeof(source) - 1u, lines, 8, cheats, 3,
                        operations, 5, &report) == VC_PSV_STATUS_OK);
-    CHECK(report.non_direct_cheats == 2);
-    CHECK(report.unsupported_operations == 1);
+    CHECK(report.non_direct_cheats == 1);
+    CHECK(report.unsupported_operations == 0);
     CHECK(report.invalid_operation_sequences == 0);
     CHECK(cheats[0].translation_state == VC_PSV_TRANSLATION_MODULE_RELATIVE);
-    CHECK(cheats[1].translation_state == VC_PSV_TRANSLATION_REQUIRES_UNSUPPORTED);
+    CHECK(cheats[1].translation_state == VC_PSV_TRANSLATION_DIRECT_ONLY);
     CHECK(cheats[2].translation_state == VC_PSV_TRANSLATION_DIRECT_ONLY);
     CHECK(operations[0].kind == VC_PSV_OPERATION_SELECT_MODULE_BASE);
     CHECK(operations[0].address_mode == VC_PSV_ADDRESS_NOT_APPLICABLE);
     CHECK(operations[1].kind == VC_PSV_OPERATION_WRITE_U8);
     CHECK(operations[1].address_mode ==
           VC_PSV_ADDRESS_SELECTED_MODULE_RELATIVE);
-    CHECK(operations[2].kind == VC_PSV_OPERATION_OPAQUE);
+    CHECK(operations[2].kind == VC_PSV_OPERATION_BUTTON_GATE);
     CHECK(operations[3].kind == VC_PSV_OPERATION_WRITE_U16);
     CHECK(operations[3].address_mode == VC_PSV_ADDRESS_ABSOLUTE);
     CHECK(operations[4].kind == VC_PSV_OPERATION_WRITE_U32);
@@ -159,7 +159,7 @@ static void test_pcsa00133_module_relative_bolts(void)
 
     CHECK(vc_psv_parse(source, sizeof(source) - 1u, lines, 6, &cheat, 1,
                        operations, 2, &report) == VC_PSV_STATUS_OK);
-    CHECK(report.schema_version == UINT32_C(2));
+    CHECK(report.schema_version == UINT32_C(3));
     CHECK(report.total_cheats == 1);
     CHECK(report.total_operations == 2);
     CHECK(report.unsupported_operations == 0);
@@ -174,46 +174,58 @@ static void test_pcsa00133_module_relative_bolts(void)
     CHECK(operations[1].kind == VC_PSV_OPERATION_WRITE_U16);
     CHECK(operations[1].address_mode ==
           VC_PSV_ADDRESS_SELECTED_MODULE_RELATIVE);
+    CHECK(operations[1].module_serial == 0);
+    CHECK(operations[1].segment_index == 1);
     CHECK(operations[1].address == UINT32_C(0x002d1560));
     CHECK(operations[1].value == UINT32_C(0x0000270f));
 }
 
-static void test_invalid_module_base_sequences_fail_closed(void)
+static void test_module_base_overwrite_reset_and_validation(void)
 {
     static const char source[] =
-        "_V0 Selector after write\n"
+        "_V0 Selector overwrite\n"
         "$0000 00000010 00000001\n"
-        "$B200 00000000 00000000\n"
-        "_V0 Duplicate selector\n"
-        "$B200 00000000 00000000\n"
-        "$B200 00000001 00000001\n"
-        "$0200 00000020 00000002\n"
-        "_V0 Invalid selector fields\n"
-        "$B200 00000100 00000002\n"
-        "$0100 00000030 00000003\n"
-        "_V0 Dangling selector\n"
-        "$B200 00000000 00000000\n";
-    vc_psv_line lines[12];
-    vc_psv_cheat cheats[4];
-    vc_psv_operation operations[8];
+        "$B200 00000001 00000000\n"
+        "$0100 00000020 00000002\n"
+        "$B201 00000000 00000000\n"
+        "$5200 00000030 00000040\n"
+        "_V0 Selector reset\n"
+        "$0200 00001000 00000003\n"
+        "_V0 Invalid segment\n"
+        "$B20E 00000002 00000000\n"
+        "_V0 Invalid third operand\n"
+        "$B229 00000001 00000001\n"
+        "_V0 State only\n"
+        "$B229 00000001 00000000\n";
+    vc_psv_line lines[14];
+    vc_psv_cheat cheats[5];
+    vc_psv_operation operations[9];
     vc_psv_report report;
 
-    CHECK(vc_psv_parse(source, sizeof(source) - 1u, lines, 12, cheats, 4,
-                       operations, 8, &report) == VC_PSV_STATUS_OK);
-    CHECK(report.total_cheats == 4);
-    CHECK(report.total_operations == 8);
+    CHECK(vc_psv_parse(source, sizeof(source) - 1u, lines, 14, cheats, 5,
+                       operations, 9, &report) == VC_PSV_STATUS_OK);
+    CHECK(report.total_cheats == 5);
+    CHECK(report.total_operations == 9);
     CHECK(report.unsupported_operations == 0);
     CHECK(report.non_direct_cheats == 4);
-    CHECK(report.invalid_operation_sequences == 4);
-    CHECK(cheats[0].translation_state == VC_PSV_TRANSLATION_MALFORMED);
-    CHECK(cheats[1].translation_state == VC_PSV_TRANSLATION_MALFORMED);
+    CHECK(report.invalid_operation_sequences == 2);
+    CHECK(cheats[0].translation_state == VC_PSV_TRANSLATION_MODULE_RELATIVE);
+    CHECK(cheats[1].translation_state == VC_PSV_TRANSLATION_DIRECT_ONLY);
     CHECK(cheats[2].translation_state == VC_PSV_TRANSLATION_MALFORMED);
     CHECK(cheats[3].translation_state == VC_PSV_TRANSLATION_MALFORMED);
+    CHECK(cheats[4].translation_state == VC_PSV_TRANSLATION_MODULE_RELATIVE);
     CHECK(operations[0].address_mode == VC_PSV_ADDRESS_ABSOLUTE);
     CHECK(operations[1].kind == VC_PSV_OPERATION_SELECT_MODULE_BASE);
-    CHECK(operations[4].address_mode ==
+    CHECK(operations[2].address_mode ==
           VC_PSV_ADDRESS_SELECTED_MODULE_RELATIVE);
-    CHECK(operations[6].address_mode == VC_PSV_ADDRESS_ABSOLUTE);
+    CHECK(operations[2].module_serial == 0);
+    CHECK(operations[2].segment_index == 1);
+    CHECK(operations[3].kind == VC_PSV_OPERATION_SELECT_MODULE_BASE);
+    CHECK(operations[4].kind == VC_PSV_OPERATION_MOVE);
+    CHECK(operations[4].module_serial == 1);
+    CHECK(operations[4].segment_index == 0);
+    CHECK(operations[5].address_mode == VC_PSV_ADDRESS_ABSOLUTE);
+    CHECK(operations[8].legacy_code == UINT16_C(0xb229));
 }
 
 static void test_truncation_discards_non_closed_prefixes(void)
@@ -347,7 +359,7 @@ int main(void)
     test_legacy_code_limit_without_output_buffers();
     test_modifier_taints_complete_cheat();
     test_pcsa00133_module_relative_bolts();
-    test_invalid_module_base_sequences_fail_closed();
+    test_module_base_overwrite_reset_and_validation();
     test_truncation_discards_non_closed_prefixes();
     test_invalid_header_taints_previous_entry();
 
