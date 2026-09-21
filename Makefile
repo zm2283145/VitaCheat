@@ -8,16 +8,22 @@ CFLAGS += -std=c11 -Wall -Wextra -Werror -Wpedantic
 BUILD_DIR := build
 SEARCH_TEST_BIN := $(BUILD_DIR)/vitacheat_host_tests
 PSV_TEST_BIN := $(BUILD_DIR)/vitacheat_psv_tests
+LEGACY_EMIT_TEST_BIN := $(BUILD_DIR)/vitacheat_legacy_emit_tests
 LEGACY_PLAN_TEST_BIN := $(BUILD_DIR)/vitacheat_legacy_plan_tests
 LEGACY_POINTER_PLAN_TEST_BIN := $(BUILD_DIR)/vitacheat_legacy_pointer_plan_tests
 ACTIVATION_TEST_BIN := $(BUILD_DIR)/vitacheat_activation_tests
 PAUSE_TEST_BIN := $(BUILD_DIR)/vitacheat_pause_tests
-TEST_BINS := $(SEARCH_TEST_BIN) $(PSV_TEST_BIN) $(LEGACY_PLAN_TEST_BIN) \
+LEGACY_CORPUS_BIN := $(BUILD_DIR)/vitacheat_legacy_corpus
+LEGACY_CORPUS_REVISION := bb8158a1c696914a8ea2299889d42ab9a57a3ab2
+TEST_BINS := $(SEARCH_TEST_BIN) $(PSV_TEST_BIN) $(LEGACY_EMIT_TEST_BIN) \
+	$(LEGACY_PLAN_TEST_BIN) \
 	$(LEGACY_POINTER_PLAN_TEST_BIN) \
 	$(ACTIVATION_TEST_BIN) $(PAUSE_TEST_BIN)
 CORE_SOURCES := src/search.c src/legacy_psv.c src/legacy_plan.c \
+	src/legacy_emit.c \
 	src/menu_activation.c src/pause.c
 HEADERS := include/vitacheat/search.h include/vitacheat/legacy_psv.h \
+	include/vitacheat/legacy_emit.h \
 	include/vitacheat/legacy_plan.h include/vitacheat/menu_activation.h \
 	include/vitacheat/pause.h
 VITA_CC ?= arm-vita-eabi-gcc
@@ -35,7 +41,7 @@ VITA_LDLIBS := -lSceDisplay_stub -lSceCtrl_stub -lSceKernelThreadMgr_stub \
 VITA_OBJECTS := $(VITA_BUILD_DIR)/main.o $(VITA_BUILD_DIR)/search.o \
 	$(VITA_BUILD_DIR)/menu_activation.o $(VITA_BUILD_DIR)/debugScreen.o
 
-.PHONY: all test vita-self-test clean
+.PHONY: all test legacy-corpus-test vita-self-test clean
 
 all: $(TEST_BINS)
 
@@ -47,6 +53,9 @@ $(SEARCH_TEST_BIN): $(CORE_SOURCES) tests/host/test_search.c $(HEADERS) | $(BUIL
 
 $(PSV_TEST_BIN): $(CORE_SOURCES) tests/host/test_legacy_psv.c $(HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(CORE_SOURCES) tests/host/test_legacy_psv.c -o $(PSV_TEST_BIN)
+
+$(LEGACY_EMIT_TEST_BIN): $(CORE_SOURCES) tests/host/test_legacy_emit.c $(HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(CORE_SOURCES) tests/host/test_legacy_emit.c -o $(LEGACY_EMIT_TEST_BIN)
 
 $(LEGACY_PLAN_TEST_BIN): $(CORE_SOURCES) tests/host/test_legacy_plan.c $(HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(CORE_SOURCES) tests/host/test_legacy_plan.c -o $(LEGACY_PLAN_TEST_BIN)
@@ -60,13 +69,25 @@ $(ACTIVATION_TEST_BIN): $(CORE_SOURCES) tests/host/test_menu_activation.c $(HEAD
 $(PAUSE_TEST_BIN): $(CORE_SOURCES) tests/host/test_pause.c $(HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(CORE_SOURCES) tests/host/test_pause.c -o $(PAUSE_TEST_BIN)
 
-test: $(TEST_BINS)
+$(LEGACY_CORPUS_BIN): $(CORE_SOURCES) tools/legacy_psv_corpus.c $(HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(CORE_SOURCES) tools/legacy_psv_corpus.c -o $(LEGACY_CORPUS_BIN)
+
+test: $(TEST_BINS) $(LEGACY_CORPUS_BIN)
 	./$(SEARCH_TEST_BIN)
 	./$(PSV_TEST_BIN)
+	./$(LEGACY_EMIT_TEST_BIN)
 	./$(LEGACY_PLAN_TEST_BIN)
 	./$(LEGACY_POINTER_PLAN_TEST_BIN)
 	./$(ACTIVATION_TEST_BIN)
 	./$(PAUSE_TEST_BIN)
+	$(LEGACY_CORPUS_BIN) --self-test
+
+legacy-corpus-test: $(LEGACY_CORPUS_BIN)
+	@test -n "$(LEGACY_CORPUS_DIR)" || \
+		(echo "set LEGACY_CORPUS_DIR to a pinned r0ah/vitacheat checkout or db path" >&2; exit 2)
+	@test "$$(git -C "$(LEGACY_CORPUS_DIR)" rev-parse HEAD)" = "$(LEGACY_CORPUS_REVISION)" || \
+		(echo "legacy corpus must be checked out at $(LEGACY_CORPUS_REVISION)" >&2; exit 2)
+	$(LEGACY_CORPUS_BIN) "$(LEGACY_CORPUS_DIR)"
 
 vita-self-test: $(VITA_BUILD_DIR)/vitacheat-self-test.vpk
 

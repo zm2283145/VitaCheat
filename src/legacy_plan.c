@@ -90,7 +90,8 @@ static bool valid_operation_flags(uint32_t flags)
 {
     const uint32_t known = VC_PSV_OPERATION_FLAG_INLINE_COMMENT |
                            VC_PSV_OPERATION_FLAG_NONCANONICAL_REPEAT |
-                           VC_PSV_OPERATION_FLAG_NONCANONICAL_PATCH_U8;
+                           VC_PSV_OPERATION_FLAG_NONCANONICAL_PATCH_U8 |
+                           VC_PSV_OPERATION_FLAG_LOWERCASE_HEX;
     return (flags & ~known) == 0;
 }
 
@@ -102,8 +103,23 @@ static bool valid_compile_compatibility(uint32_t compatibility)
                            VC_PSV_COMPILE_ALLOW_POINTER_LEVELS_6_8 |
                            VC_PSV_COMPILE_ALLOW_POINTER_TERMINAL_MARKERS |
                            VC_PSV_COMPILE_ALLOW_POINTER_U32_GAP |
-                           VC_PSV_COMPILE_ALLOW_POINTER_MOV_MISMATCH;
+                           VC_PSV_COMPILE_ALLOW_POINTER_MOV_MISMATCH |
+                           VC_PSV_COMPILE_ALLOW_NONCANONICAL_HEADER;
     return (compatibility & ~known) == 0;
+}
+
+static uint32_t plan_diagnostics_from_import(uint32_t diagnostics)
+{
+    uint32_t result = VC_PSV_PLAN_DIAGNOSTIC_NONE;
+
+    if ((diagnostics & VC_PSV_DIAGNOSTIC_LOWERCASE_HEX) != 0) {
+        result |= VC_PSV_PLAN_DIAGNOSTIC_LOWERCASE_HEX;
+    }
+    if ((diagnostics &
+         VC_PSV_DIAGNOSTIC_RUNTIME_DEPENDENT_ADDRESS) != 0) {
+        result |= VC_PSV_PLAN_DIAGNOSTIC_RUNTIME_DEPENDENT_ADDRESS;
+    }
+    return result;
 }
 
 static bool is_canonical_repeat(uint16_t code)
@@ -356,6 +372,10 @@ static vc_psv_compile_status accept_positional_record(
         ++plan->compatibility_diagnostics;
     }
     node->flags |= operation->flags;
+    node->diagnostics |=
+        plan_diagnostics_from_import(operation->diagnostics);
+    plan->diagnostics |=
+        plan_diagnostics_from_import(operation->diagnostics);
     return VC_PSV_COMPILE_OK;
 }
 
@@ -480,11 +500,26 @@ vc_psv_compile_status vc_psv_compile_cheat(
     memset(&result, 0, sizeof(result));
     result.schema_version = VC_PSV_PLAN_SCHEMA_VERSION;
     result.physical_record_count = cheat->operation_count;
+    if ((cheat->diagnostics &
+         VC_PSV_DIAGNOSTIC_NONCANONICAL_HEADER) != 0) {
+        result.diagnostics |=
+            VC_PSV_PLAN_DIAGNOSTIC_NONCANONICAL_HEADER;
+    }
 
     if (cheat->translation_state == VC_PSV_TRANSLATION_MALFORMED) {
         clear_nodes(nodes, node_capacity);
         *plan = result;
         return VC_PSV_COMPILE_MALFORMED;
+    }
+    if ((cheat->diagnostics &
+         VC_PSV_DIAGNOSTIC_NONCANONICAL_HEADER) != 0) {
+        if ((compatibility &
+             VC_PSV_COMPILE_ALLOW_NONCANONICAL_HEADER) == 0) {
+            clear_nodes(nodes, node_capacity);
+            *plan = result;
+            return VC_PSV_COMPILE_NONCANONICAL;
+        }
+        ++result.compatibility_diagnostics;
     }
     while (cheat->first_operation_index + index < operation_end) {
         const vc_psv_operation *operation =
@@ -551,6 +586,9 @@ vc_psv_compile_status vc_psv_compile_cheat(
         memset(&node, 0, sizeof(node));
         node.width = operation_width(operation);
         node.flags = operation->flags;
+        node.diagnostics =
+            plan_diagnostics_from_import(operation->diagnostics);
+        result.diagnostics |= node.diagnostics;
         node.physical_first = index;
         node.physical_count = 1;
 
@@ -616,6 +654,9 @@ vc_psv_compile_status vc_psv_compile_cheat(
             node.value_increment = continuation->value;
             node.physical_count = 2;
             node.flags |= continuation->flags;
+            node.diagnostics |=
+                plan_diagnostics_from_import(
+                    continuation->diagnostics);
             action_increment = (size_t)node.repeat_count;
             physical_advance = 2;
             break;
@@ -1007,6 +1048,7 @@ vc_psv_compile_status vc_psv_compile_cheat(
         if (status != VC_PSV_COMPILE_OK) {
             break;
         }
+        result.diagnostics |= node.diagnostics;
         if (!add_size(result.maximum_actions, action_increment,
                       &result.maximum_actions) ||
             result.maximum_actions > action_limit) {
@@ -1171,9 +1213,21 @@ static bool validate_plan(const vc_psv_plan *plan,
     bool needs_resolve = false;
     bool needs_read = false;
     bool needs_buttons = false;
+    const uint32_t known_plan_diagnostics =
+        VC_PSV_PLAN_DIAGNOSTIC_POINTER_LEVEL |
+        VC_PSV_PLAN_DIAGNOSTIC_POINTER_TERMINAL_MARKER |
+        VC_PSV_PLAN_DIAGNOSTIC_POINTER_REPEAT_MARKER |
+        VC_PSV_PLAN_DIAGNOSTIC_POINTER_U32_GAP |
+        VC_PSV_PLAN_DIAGNOSTIC_POINTER_MOV_WIDTH |
+        VC_PSV_PLAN_DIAGNOSTIC_POINTER_MOV_LEVEL |
+        VC_PSV_PLAN_DIAGNOSTIC_POINTER_MOV_MARKER |
+        VC_PSV_PLAN_DIAGNOSTIC_NONCANONICAL_HEADER |
+        VC_PSV_PLAN_DIAGNOSTIC_LOWERCASE_HEX |
+        VC_PSV_PLAN_DIAGNOSTIC_RUNTIME_DEPENDENT_ADDRESS;
 
     if (plan == NULL || callbacks == NULL || report == NULL ||
         plan->schema_version != VC_PSV_PLAN_SCHEMA_VERSION ||
+        (plan->diagnostics & ~known_plan_diagnostics) != 0 ||
         plan->maximum_actions > VC_PSV_MAX_ACTION_LIMIT ||
         plan->maximum_memory_reads > VC_PSV_MAX_READ_LIMIT ||
         (nodes == NULL && plan->node_count != 0) ||
@@ -1199,6 +1253,9 @@ static bool validate_plan(const vc_psv_plan *plan,
         size_t action_increment = 0;
         size_t read_increment = 0;
         size_t expected_physical_count = 1;
+        const uint32_t general_diagnostics =
+            VC_PSV_PLAN_DIAGNOSTIC_LOWERCASE_HEX |
+            VC_PSV_PLAN_DIAGNOSTIC_RUNTIME_DEPENDENT_ADDRESS;
         const uint32_t known_diagnostics =
             VC_PSV_PLAN_DIAGNOSTIC_POINTER_LEVEL |
             VC_PSV_PLAN_DIAGNOSTIC_POINTER_TERMINAL_MARKER |
@@ -1206,7 +1263,8 @@ static bool validate_plan(const vc_psv_plan *plan,
             VC_PSV_PLAN_DIAGNOSTIC_POINTER_U32_GAP |
             VC_PSV_PLAN_DIAGNOSTIC_POINTER_MOV_WIDTH |
             VC_PSV_PLAN_DIAGNOSTIC_POINTER_MOV_LEVEL |
-            VC_PSV_PLAN_DIAGNOSTIC_POINTER_MOV_MARKER;
+            VC_PSV_PLAN_DIAGNOSTIC_POINTER_MOV_MARKER |
+            general_diagnostics;
 
         if (!valid_width(node->width) ||
             !valid_operation_flags(node->flags) ||
@@ -1252,7 +1310,7 @@ static bool validate_plan(const vc_psv_plan *plan,
             return false;
         }
         if (node->kind <= VC_PSV_PLAN_CONDITION_GATE) {
-            if (node->diagnostics != VC_PSV_PLAN_DIAGNOSTIC_NONE ||
+            if ((node->diagnostics & ~general_diagnostics) != 0 ||
                 !pointer_path_is_zero(&node->destination_pointer) ||
                 !pointer_path_is_zero(&node->source_pointer) ||
                 node->pointer_increment_selector != 0 ||
@@ -1263,7 +1321,8 @@ static bool validate_plan(const vc_psv_plan *plan,
         } else if (node->kind == VC_PSV_PLAN_POINTER_WRITE) {
             const uint32_t allowed =
                 VC_PSV_PLAN_DIAGNOSTIC_POINTER_LEVEL |
-                VC_PSV_PLAN_DIAGNOSTIC_POINTER_TERMINAL_MARKER;
+                VC_PSV_PLAN_DIAGNOSTIC_POINTER_TERMINAL_MARKER |
+                general_diagnostics;
 
             if ((node->diagnostics & ~allowed) != 0 ||
                 (node->destination_pointer.level_count >
@@ -1278,7 +1337,8 @@ static bool validate_plan(const vc_psv_plan *plan,
             const uint32_t allowed =
                 VC_PSV_PLAN_DIAGNOSTIC_POINTER_LEVEL |
                 VC_PSV_PLAN_DIAGNOSTIC_POINTER_REPEAT_MARKER |
-                VC_PSV_PLAN_DIAGNOSTIC_POINTER_U32_GAP;
+                VC_PSV_PLAN_DIAGNOSTIC_POINTER_U32_GAP |
+                general_diagnostics;
 
             if ((node->diagnostics & ~allowed) != 0 ||
                 (node->destination_pointer.level_count >
@@ -1297,7 +1357,8 @@ static bool validate_plan(const vc_psv_plan *plan,
                 VC_PSV_PLAN_DIAGNOSTIC_POINTER_LEVEL |
                 VC_PSV_PLAN_DIAGNOSTIC_POINTER_MOV_WIDTH |
                 VC_PSV_PLAN_DIAGNOSTIC_POINTER_MOV_LEVEL |
-                VC_PSV_PLAN_DIAGNOSTIC_POINTER_MOV_MARKER;
+                VC_PSV_PLAN_DIAGNOSTIC_POINTER_MOV_MARKER |
+                general_diagnostics;
             const uint8_t expected_source_width =
                 node->width == VC_PSV_WIDTH_U8
                     ? UINT8_C(4)

@@ -14,7 +14,7 @@ Primary references:
 - [VitaCheat code header](https://github.com/r0ah/vitacheat/wiki/Code-Header)
 - [Ratchet & Clank PCSA00133 database example](https://github.com/r0ah/vitacheat/blob/master/db/PCSA00133.psv)
 
-## Lossless import schema 4
+## Lossless import schema 5
 
 `vc_psv_parse` is allocation-free and accepts at most 1 MiB of caller-owned
 source. With adequate output capacity, every line contains a raw span and the
@@ -27,7 +27,14 @@ returns required totals, clears partial records, reports zero stored records,
 and returns `VC_PSV_STATUS_TRUNCATED`. Consumers never receive dangling
 cross-indexes from an incomplete object graph.
 
-Schema 4 keeps one imported operation per physical `$` record. A repeat header
+`vc_psv_parse_with_options` validates BOM-marked or unmarked UTF-8 before
+tokenization. Invalid UTF-8 fails unless the caller explicitly selects the
+Windows-1252 or ISO-8859-1 fallback. The selected source encoding is reported;
+fallback never rewrites source bytes. `vc_psv_emit_lossless` verifies that raw
+line spans are contiguous and reconstructs the source byte-for-byte.
+
+Schema 5 keeps one imported operation per lexically valid physical `$` record.
+A repeat header
 owns its immediately following physical record, which is classified as
 `VC_PSV_OPERATION_REPEAT_CONTINUATION` by position rather than by interpreting
 its first field as a top-level opcode. Pointer roots similarly reserve their
@@ -37,7 +44,18 @@ half, or repeat-count record in that span is classified as
 can therefore never dispatch as a standalone opcode or mutate selector state.
 Every imported record retains the raw line span, 16-bit first field, both
 32-bit fields, descriptor and line indexes, and any explicit compatibility
-flags.
+flags. A malformed child still occupies its expected physical position, taints
+the complete descriptor, and cannot expose a later child as a top-level
+operation. Incomplete 4/3/7/8 spans receive an explicit truncated-span
+diagnostic. Lexically invalid records remain available through their raw line
+span and `Unknown` record role; their fields are never padded or truncated.
+
+Diagnostics separately identify lexical errors, truncated spans, unsupported
+opcodes, noncanonical headers/markers/suffixes/levels/widths, invalid B2
+module/segment operands, authoring-limit warnings, runtime-dependent
+addresses, lowercase hexadecimal, orphan records, and canonical-emission
+blocks. Informational runtime and lowercase diagnostics do not authorize an
+operation and do not change its semantics.
 
 The schema corrects the earlier B2 field interpretation. z06 encodes a selector
 as `$B2MM SSSSSSSS 00000000`: `MM` is the module serial, and `S` is segment 0
@@ -184,11 +202,56 @@ reported on its plan node and in the plan diagnostic count:
 - pointer-write `$3302`/`$9000` and pointer-repeat `$7402` markers;
 - full-U32 pointer-repeat gaps; and
 - pointer-MOV source width/level or swapped `$8800`/`$8900` marker mismatches.
+- the two observed `_V0---Alternative Codes [...]---` descriptor headers.
 
 Field width remains exact. A 9-digit address or 7/6-digit value is malformed,
 not padded or truncated. Top-level `0001`, `01F1`, `B000`, `C001`, `C007`, and
 `C101` remain unknown. The importer preserves them, but no executable plan is
 available for that descriptor.
+
+Lowercase hexadecimal remains semantically equivalent and is diagnosed so
+tools can apply a visible policy. It is the only textual variation that strict,
+semantically decoded records may normalize. Compatibility-only forms retain a
+diagnostic even when explicitly enabled.
+
+## Canonical re-emission
+
+`vc_psv_emit_canonical` first compiles each descriptor in strict mode. Only a
+descriptor that is fully decoded without a blocking or compatibility
+diagnostic is eligible. Its physical records are emitted as uppercase,
+fixed-width `$CCCC AAAAAAAA VVVVVVVV` fields; descriptor text, comments, blank
+lines, and original line endings remain unchanged. The operation is sized
+before writing, so insufficient output capacity cannot produce a partial
+document.
+
+Any descriptor containing an unknown opcode, malformed field, truncated or
+mismatched span, noncanonical repeat suffix/patch width/pointer level/marker,
+inline comment, B2 anomaly, or noncanonical header is copied byte-for-byte.
+This prevents silent normalization of observed `0001`, `01F1`, `B000`, `C001`,
+`C007`, `C101`, `$3302`, `$7402`, `$9000`, repeat suffixes `00/02/10`, levels
+6-8, or anomalous B2 operands.
+
+## Pinned corpus regression
+
+The repository does not vendor the third-party database. Run the deterministic
+host inventory against a caller-owned checkout:
+
+```sh
+git clone --filter=blob:none https://github.com/r0ah/vitacheat.git ../legacy-vc-db
+git -C ../legacy-vc-db checkout --detach bb8158a1c696914a8ea2299889d42ab9a57a3ab2
+make legacy-corpus-test LEGACY_CORPUS_DIR=../legacy-vc-db
+```
+
+The Make target rejects any other checkout revision. The runner checks all 676
+`.psv` files and reports each mismatch against these pinned facts: 34,839
+physical records; 318 distinct four-hex first fields; 7,867 ordinary `_V0`,
+121 `_V1`, and two `_V0---Alternative` headers; CRLF line endings; 1,343 inline
+comments; 18 uncommented records with trailing whitespace; the three exact
+field-width defects and source locations; 171 continuation-only tokens; 147
+opcode/structural candidates; and zero unclassified physical records. It also
+runs byte-exact and canonical emission over every file and reports deterministic
+strict/compatibility compilation totals. `vitacheat_legacy_corpus --self-test`
+is offline and is part of the ordinary host suite.
 
 ## Deliberately unsupported
 
@@ -196,10 +259,11 @@ Unknown extensions remain opaque. One unknown physical record makes the
 complete descriptor unavailable for planning; a later scalar or pointer record
 is never detached from that unsupported context.
 
-The audited public corpus baseline contains 676 files, 34,839 physical records,
-and 318 distinct first-field tokens. This layer does not claim full-corpus
-execution compatibility because unknown extensions remain opaque and this
-layer provides no live-memory adapter. Import, bounded planning, and callback
-evaluation do not authorize real execution. A `.suprx` binary is never treated
-as data, `_V1` intent never bypasses future arming policy, and no legacy
-absolute or pointer-derived address is automatically trusted.
+The pinned public corpus regression is exhaustive for syntax preservation,
+inventory, contextual physical ownership, and diagnostic classification. It
+does not claim full-corpus execution compatibility: unknown extensions remain
+opaque, compatibility forms require explicit opt-in, and no live-memory
+adapter exists. Import, bounded planning, and callback evaluation do not
+authorize real execution. A `.suprx` binary is never treated as data, `_V1`
+intent never bypasses future arming policy, and no legacy absolute or
+pointer-derived address is automatically trusted.

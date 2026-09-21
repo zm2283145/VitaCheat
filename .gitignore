@@ -1,4 +1,5 @@
 /build/
+/build-*/
 /.cache/
 *.o
 *.obj
@@ -9,4 +10,3 @@
 *.gcno
 *.profraw
 *.profdata
-

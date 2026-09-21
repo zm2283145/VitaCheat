@@ -239,7 +239,7 @@ static void test_b2_write_and_move(void)
     if (!parse_fixture(source, &fixture)) {
         return;
     }
-    CHECK(fixture.report.schema_version == UINT32_C(4));
+    CHECK(fixture.report.schema_version == UINT32_C(5));
     CHECK(compile_fixture(&fixture, 0, NULL, nodes, 2, &plan) ==
           VC_PSV_COMPILE_OK);
     CHECK(plan.node_count == 2);

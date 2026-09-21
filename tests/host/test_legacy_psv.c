@@ -159,7 +159,7 @@ static void test_pcsa00133_module_relative_bolts(void)
 
     CHECK(vc_psv_parse(source, sizeof(source) - 1u, lines, 6, &cheat, 1,
                        operations, 2, &report) == VC_PSV_STATUS_OK);
-    CHECK(report.schema_version == UINT32_C(4));
+    CHECK(report.schema_version == UINT32_C(5));
     CHECK(report.total_cheats == 1);
     CHECK(report.total_operations == 2);
     CHECK(report.unsupported_operations == 0);
@@ -224,7 +224,15 @@ static void test_module_base_overwrite_reset_and_validation(void)
     CHECK(operations[4].kind == VC_PSV_OPERATION_MOVE);
     CHECK(operations[4].module_serial == 1);
     CHECK(operations[4].segment_index == 0);
+    CHECK((operations[4].diagnostics &
+           VC_PSV_DIAGNOSTIC_RUNTIME_DEPENDENT_ADDRESS) != 0);
     CHECK(operations[5].address_mode == VC_PSV_ADDRESS_ABSOLUTE);
+    CHECK((operations[6].diagnostics &
+           VC_PSV_DIAGNOSTIC_INVALID_MODULE_SELECTOR) != 0);
+    CHECK((operations[7].diagnostics &
+           VC_PSV_DIAGNOSTIC_INVALID_MODULE_SELECTOR) != 0);
+    CHECK((operations[8].diagnostics &
+           VC_PSV_DIAGNOSTIC_INVALID_MODULE_SELECTOR) == 0);
     CHECK(operations[8].legacy_code == UINT16_C(0xb229));
 }
 
@@ -339,7 +347,7 @@ static void test_legacy_code_limit_without_output_buffers(void)
 
     memcpy(source + used, "_V0 Oversized\n", sizeof("_V0 Oversized\n") - 1u);
     used += sizeof("_V0 Oversized\n") - 1u;
-    for (index = 0; index < 201; ++index) {
+    for (index = 0; index < 200; ++index) {
         static const char code[] = "$0200 81000000 00000001\n";
         memcpy(source + used, code, sizeof(code) - 1u);
         used += sizeof(code) - 1u;
@@ -347,8 +355,46 @@ static void test_legacy_code_limit_without_output_buffers(void)
 
     CHECK(vc_psv_parse(source, used, NULL, 0, NULL, 0, NULL, 0, &report) ==
           VC_PSV_STATUS_TRUNCATED);
+    CHECK(report.total_operations == 200);
+    CHECK(report.legacy_limit_violations == 0);
+
+    memcpy(source + used, "$0200 81000000 00000001\n",
+           sizeof("$0200 81000000 00000001\n") - 1u);
+    used += sizeof("$0200 81000000 00000001\n") - 1u;
+    CHECK(vc_psv_parse(source, used, NULL, 0, NULL, 0, NULL, 0, &report) ==
+          VC_PSV_STATUS_TRUNCATED);
     CHECK(report.total_operations == 201);
     CHECK(report.legacy_limit_violations == 1);
+}
+
+static void test_legacy_descriptor_limit_boundary(void)
+{
+    char source[1024];
+    vc_psv_line lines[51];
+    vc_psv_cheat cheats[51];
+    vc_psv_report report;
+    size_t used = 0;
+    size_t index;
+
+    for (index = 0; index < 50; ++index) {
+        static const char header[] = "_V0 Test\n";
+
+        memcpy(source + used, header, sizeof(header) - 1u);
+        used += sizeof(header) - 1u;
+    }
+    CHECK(vc_psv_parse(source, used, lines, 51, cheats, 51,
+                       NULL, 0, &report) == VC_PSV_STATUS_OK);
+    CHECK(report.total_cheats == 50);
+    CHECK(report.legacy_limit_violations == 0);
+
+    memcpy(source + used, "_V0 Extra\n", sizeof("_V0 Extra\n") - 1u);
+    used += sizeof("_V0 Extra\n") - 1u;
+    CHECK(vc_psv_parse(source, used, lines, 51, cheats, 51,
+                       NULL, 0, &report) == VC_PSV_STATUS_OK);
+    CHECK(report.total_cheats == 51);
+    CHECK(report.legacy_limit_violations == 1);
+    CHECK((cheats[50].diagnostics &
+           VC_PSV_DIAGNOSTIC_AUTHORING_LIMIT) != 0);
 }
 
 int main(void)
@@ -357,6 +403,7 @@ int main(void)
     test_truncation_counts_without_guessing();
     test_invalid_and_bounded_inputs();
     test_legacy_code_limit_without_output_buffers();
+    test_legacy_descriptor_limit_boundary();
     test_modifier_taints_complete_cheat();
     test_pcsa00133_module_relative_bolts();
     test_module_base_overwrite_reset_and_validation();

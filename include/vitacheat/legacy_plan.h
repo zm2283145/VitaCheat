@@ -11,7 +11,7 @@
 extern "C" {
 #endif
 
-#define VC_PSV_PLAN_SCHEMA_VERSION UINT32_C(2)
+#define VC_PSV_PLAN_SCHEMA_VERSION UINT32_C(3)
 #define VC_PSV_DEFAULT_ACTION_LIMIT ((size_t)4096)
 #define VC_PSV_MAX_ACTION_LIMIT ((size_t)65536)
 #define VC_PSV_POINTER_MAX_LEVELS ((size_t)8)
@@ -28,7 +28,8 @@ typedef enum vc_psv_compile_compatibility {
     VC_PSV_COMPILE_ALLOW_POINTER_LEVELS_6_8 = 1u << 3,
     VC_PSV_COMPILE_ALLOW_POINTER_TERMINAL_MARKERS = 1u << 4,
     VC_PSV_COMPILE_ALLOW_POINTER_U32_GAP = 1u << 5,
-    VC_PSV_COMPILE_ALLOW_POINTER_MOV_MISMATCH = 1u << 6
+    VC_PSV_COMPILE_ALLOW_POINTER_MOV_MISMATCH = 1u << 6,
+    VC_PSV_COMPILE_ALLOW_NONCANONICAL_HEADER = 1u << 7
 } vc_psv_compile_compatibility;
 
 typedef enum vc_psv_compile_status {
@@ -67,7 +68,10 @@ typedef enum vc_psv_plan_diagnostic {
     VC_PSV_PLAN_DIAGNOSTIC_POINTER_U32_GAP = 1u << 3,
     VC_PSV_PLAN_DIAGNOSTIC_POINTER_MOV_WIDTH = 1u << 4,
     VC_PSV_PLAN_DIAGNOSTIC_POINTER_MOV_LEVEL = 1u << 5,
-    VC_PSV_PLAN_DIAGNOSTIC_POINTER_MOV_MARKER = 1u << 6
+    VC_PSV_PLAN_DIAGNOSTIC_POINTER_MOV_MARKER = 1u << 6,
+    VC_PSV_PLAN_DIAGNOSTIC_NONCANONICAL_HEADER = 1u << 7,
+    VC_PSV_PLAN_DIAGNOSTIC_LOWERCASE_HEX = 1u << 8,
+    VC_PSV_PLAN_DIAGNOSTIC_RUNTIME_DEPENDENT_ADDRESS = 1u << 9
 } vc_psv_plan_diagnostic;
 
 typedef enum vc_psv_relation {
@@ -141,6 +145,7 @@ typedef struct vc_psv_plan {
     size_t maximum_actions;
     size_t maximum_memory_reads;
     size_t compatibility_diagnostics;
+    uint32_t diagnostics;
 } vc_psv_plan;
 
 /*

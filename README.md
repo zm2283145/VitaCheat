@@ -69,7 +69,14 @@ The same portable milestone now also:
 - captures original patch bytes and exposes reverse-order, retryable rollback;
 - preserves every other syntactically valid code as opaque data instead of
   guessing its meaning;
-- reports malformed records, truncation, and legacy format-limit violations;
+- reports lexical errors, incomplete physical spans, unsupported opcodes,
+  observed compatibility syntax, runtime-dependent addresses, invalid B2
+  selectors, and legacy authoring-limit warnings as distinct diagnostics;
+- validates UTF-8 (with or without BOM) and requires callers to opt into a
+  named Windows-1252 or ISO-8859-1 fallback for invalid UTF-8;
+- provides checked byte-exact reconstruction plus conservative canonical
+  re-emission for strictly decoded descriptors, while preserving unknown and
+  noncanonical descriptors verbatim;
 - exposes parsed records only when all output buffers fit, preventing dangling
   cross-indexes in a truncated import;
 - emits one menu-open event after Select remains held for five seconds, then
@@ -183,6 +190,20 @@ For bounded libFuzzer coverage, add `-DVITACHEAT_BUILD_FUZZERS=ON`. The build
 provides `vitacheat_search_fuzzer` for search inputs and
 `vitacheat_legacy_plan_fuzzer` for lossless import and descriptor compilation.
 
+The public legacy database is intentionally not vendored. To run the pinned
+corpus regression, supply a separate checkout at the audited revision:
+
+```sh
+git clone --filter=blob:none https://github.com/r0ah/vitacheat.git ../legacy-vc-db
+git -C ../legacy-vc-db checkout --detach bb8158a1c696914a8ea2299889d42ab9a57a3ab2
+make legacy-corpus-test LEGACY_CORPUS_DIR=../legacy-vc-db
+```
+
+The target verifies the checkout revision before running the deterministic
+inventory. The executable also accepts the checkout or its `db/` directory
+directly, and `vitacheat_legacy_corpus --self-test` uses only authored offline
+fixtures.
+
 VitaSDK is not required to build and run the host tests. Building the Vita
 self-test VPK does require VitaSDK.
 
@@ -228,18 +249,25 @@ listed only after their own gates pass.
 
 - `include/vitacheat/search.h` — public bounded search/refinement API.
 - `include/vitacheat/legacy_psv.h` — bounded lossless legacy importer API.
+- `include/vitacheat/legacy_emit.h` — checked lossless and canonical emission
+  policy.
 - `include/vitacheat/legacy_plan.h` — typed scalar and pointer
   compile/evaluate/apply API.
 - `include/vitacheat/menu_activation.h` — portable Select-hold state machine.
 - `include/vitacheat/pause.h` — bounded pause ownership and cleanup contract.
 - `src/search.c` — portable little-endian implementation.
 - `src/legacy_psv.c` — syntax indexing and conservative operation mapping.
+- `src/legacy_emit.c` — fail-closed canonical document re-emission.
 - `src/legacy_plan.c` — physical-record-safe planning and callback execution.
+- `tools/legacy_psv_corpus.c` — pinned public-corpus inventory and regression
+  runner.
 - `src/menu_activation.c` — five-second one-shot activation logic.
 - `src/pause.c` — transactional suspend, rollback, resume, and expiry logic.
 - `tests/host/test_search.c` — native behavioral and boundary tests.
 - `tests/host/test_legacy_psv.c` — mixed-format, truncation, and fail-closed
   importer tests.
+- `tests/host/test_legacy_emit.c` — encoding, contextual classification, and
+  round-trip/canonical policy tests.
 - `tests/host/test_legacy_plan.c` — scalar semantics, gates, bounds, and
   restoration tests.
 - `tests/host/test_legacy_pointer_plan.c` — pointer spans, traversal,

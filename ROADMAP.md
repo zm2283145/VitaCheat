@@ -17,6 +17,10 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
       families with explicit read dependencies and bounded compatibility.
 - [x] Callback-only evaluation, symbolic expansion bounds, physical-record-safe
       skips, original-patch ledger, and retryable reverse rollback.
+- [x] Add deterministic pinned-corpus inventory/regression validation with
+      contextual token classification and zero unclassified physical records.
+- [x] Add explicit UTF-8/legacy decoding policy, structured import diagnostics,
+      byte-exact reconstruction, and conservative canonical `.psv` re-emission.
 - [x] Preserve unsupported legacy codes as opaque records without executing
       guessed behavior.
 - [x] Portable, debounced five-second Select-hold activation state machine.
@@ -44,7 +48,8 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
 - [x] Import and independently validate z05/z06 `$B2MM` module-base selection,
       including corrected module/segment fields, overwrite/reset scope, and
       address snapshots. Real-process resolution remains a separate gate.
-- [ ] Add a conversion/export tool that proves byte-exact `.psv` round trips.
+- [x] Add host-side checked lossless and canonical `.psv` re-emission; unknown
+      and noncanonical descriptors remain byte-exact rather than normalized.
 - [ ] Bind every record to title ID, module identity, and module-relative
       offsets.
 - [ ] Reject mismatched builds before exposing a write action.

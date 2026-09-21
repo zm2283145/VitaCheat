@@ -13,6 +13,7 @@ typedef char vc_psv_uintptr_must_cover_size_t[
 #define VC_PSV_LEGACY_MAX_CHEATS ((size_t)50)
 #define VC_PSV_LEGACY_MAX_CODES_PER_CHEAT ((size_t)200)
 #define VC_PSV_LEGACY_MAX_DESCRIPTION_BYTES ((size_t)65)
+#define VC_PSV_CANONICAL_POINTER_LEVELS UINT16_C(5)
 
 static bool ascii_space(char value)
 {
@@ -63,7 +64,10 @@ static int hex_value(char value)
     return -1;
 }
 
-static bool parse_hex_exact(const char *source, size_t offset, size_t digits, uint32_t *value)
+static bool parse_hex_exact(const char *source,
+                            size_t offset,
+                            size_t digits,
+                            uint32_t *value)
 {
     uint32_t parsed = 0;
     size_t index;
@@ -77,6 +81,103 @@ static bool parse_hex_exact(const char *source, size_t offset, size_t digits, ui
     }
 
     *value = parsed;
+    return true;
+}
+
+static bool valid_utf8(const char *source, size_t size, size_t offset)
+{
+    size_t index = offset;
+
+    while (index < size) {
+        const unsigned char first = (unsigned char)source[index++];
+        size_t continuation_count;
+        unsigned char second;
+
+        if (first <= 0x7fu) {
+            continue;
+        }
+        if (first >= 0xc2u && first <= 0xdfu) {
+            continuation_count = 1;
+        } else if (first >= 0xe0u && first <= 0xefu) {
+            continuation_count = 2;
+        } else if (first >= 0xf0u && first <= 0xf4u) {
+            continuation_count = 3;
+        } else {
+            return false;
+        }
+        if (continuation_count > size - index) {
+            return false;
+        }
+        second = (unsigned char)source[index];
+        if ((second & 0xc0u) != 0x80u ||
+            (first == 0xe0u && second < 0xa0u) ||
+            (first == 0xedu && second >= 0xa0u) ||
+            (first == 0xf0u && second < 0x90u) ||
+            (first == 0xf4u && second >= 0x90u)) {
+            return false;
+        }
+        while (continuation_count != 0) {
+            if (((unsigned char)source[index] & 0xc0u) != 0x80u) {
+                return false;
+            }
+            ++index;
+            --continuation_count;
+        }
+    }
+    return true;
+}
+
+static bool valid_windows_1252(const char *source, size_t size)
+{
+    size_t index;
+
+    for (index = 0; index < size; ++index) {
+        const unsigned char value = (unsigned char)source[index];
+
+        if (value == 0x81u || value == 0x8du || value == 0x8fu ||
+            value == 0x90u || value == 0x9du) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool select_source_encoding(const char *source,
+                                   size_t source_size,
+                                   const vc_psv_parse_options *options,
+                                   vc_psv_source_encoding *encoding)
+{
+    const bool has_bom =
+        source_size >= 3u &&
+        (unsigned char)source[0] == 0xefu &&
+        (unsigned char)source[1] == 0xbbu &&
+        (unsigned char)source[2] == 0xbfu;
+    const size_t utf8_offset = has_bom ? 3u : 0u;
+    const vc_psv_legacy_encoding fallback =
+        options != NULL ? options->legacy_fallback
+                        : VC_PSV_LEGACY_ENCODING_NONE;
+
+    if (fallback != VC_PSV_LEGACY_ENCODING_NONE &&
+        fallback != VC_PSV_LEGACY_ENCODING_WINDOWS_1252 &&
+        fallback != VC_PSV_LEGACY_ENCODING_ISO_8859_1) {
+        return false;
+    }
+    if (valid_utf8(source, source_size, utf8_offset)) {
+        *encoding = has_bom ? VC_PSV_SOURCE_UTF8_BOM
+                            : VC_PSV_SOURCE_UTF8;
+        return true;
+    }
+    if (has_bom || fallback == VC_PSV_LEGACY_ENCODING_NONE) {
+        return false;
+    }
+    if (fallback == VC_PSV_LEGACY_ENCODING_WINDOWS_1252) {
+        if (!valid_windows_1252(source, source_size)) {
+            return false;
+        }
+        *encoding = VC_PSV_SOURCE_WINDOWS_1252;
+        return true;
+    }
+    *encoding = VC_PSV_SOURCE_ISO_8859_1;
     return true;
 }
 
@@ -167,43 +268,84 @@ static bool parse_code(const char *source,
                        uint16_t *code,
                        uint32_t *address,
                        uint32_t *value,
-                       uint32_t *flags)
+                       uint32_t *flags,
+                       uint32_t *diagnostics)
 {
+    size_t code_begin;
+    size_t code_end;
+    size_t address_begin;
+    size_t address_end;
+    size_t value_begin;
+    size_t value_end;
+    size_t index;
     uint32_t parsed_code;
 
-    if (end - begin < 1u + 4u + 1u + 8u + 1u + 8u || source[begin] != '$') {
+    if (begin == end || source[begin] != '$') {
         return false;
     }
-    ++begin;
-
-    if (end - begin < 4u || !parse_hex_exact(source, begin, 4, &parsed_code)) {
-        return false;
+    code_begin = ++begin;
+    while (begin < end && !ascii_space(source[begin])) {
+        ++begin;
     }
-    begin += 4u;
-    if (begin == end || !ascii_space(source[begin])) {
+    code_end = begin;
+    if (begin == end) {
         return false;
     }
     while (begin < end && ascii_space(source[begin])) {
         ++begin;
     }
-
-    if (end - begin < 8u || !parse_hex_exact(source, begin, 8, address)) {
-        return false;
+    address_begin = begin;
+    while (begin < end && !ascii_space(source[begin])) {
+        ++begin;
     }
-    begin += 8u;
-    if (begin == end || !ascii_space(source[begin])) {
+    address_end = begin;
+    if (begin == end) {
         return false;
     }
     while (begin < end && ascii_space(source[begin])) {
         ++begin;
     }
-
-    if (end - begin < 8u || !parse_hex_exact(source, begin, 8, value)) {
+    value_begin = begin;
+    while (begin < end && !ascii_space(source[begin])) {
+        ++begin;
+    }
+    value_end = begin;
+    if (code_end - code_begin != 4u ||
+        address_end - address_begin != 8u ||
+        value_end - value_begin != 8u) {
+        *diagnostics |= VC_PSV_DIAGNOSTIC_LEXICAL_ERROR |
+                        VC_PSV_DIAGNOSTIC_NONCANONICAL_WIDTH;
         return false;
     }
-    begin += 8u;
-    if (begin < end && !ascii_space(source[begin])) {
-        return false;
+    for (index = code_begin; index < code_end; ++index) {
+        if (hex_value(source[index]) < 0) {
+            *diagnostics |= VC_PSV_DIAGNOSTIC_LEXICAL_ERROR;
+            return false;
+        }
+        if (source[index] >= 'a' && source[index] <= 'f') {
+            *flags |= VC_PSV_OPERATION_FLAG_LOWERCASE_HEX;
+            *diagnostics |= VC_PSV_DIAGNOSTIC_LOWERCASE_HEX;
+        }
+    }
+    for (index = address_begin; index < address_end; ++index) {
+        if (hex_value(source[index]) < 0) {
+            *diagnostics |= VC_PSV_DIAGNOSTIC_LEXICAL_ERROR;
+            return false;
+        }
+        if (source[index] >= 'a' && source[index] <= 'f') {
+            *flags |= VC_PSV_OPERATION_FLAG_LOWERCASE_HEX;
+            *diagnostics |= VC_PSV_DIAGNOSTIC_LOWERCASE_HEX;
+        }
+    }
+    for (index = value_begin; index < value_end; ++index) {
+        if (hex_value(source[index]) < 0) {
+            *diagnostics |= VC_PSV_DIAGNOSTIC_LEXICAL_ERROR;
+            return false;
+        }
+        if (source[index] >= 'a' && source[index] <= 'f') {
+            *flags |= VC_PSV_OPERATION_FLAG_LOWERCASE_HEX;
+            *diagnostics |= VC_PSV_DIAGNOSTIC_LOWERCASE_HEX;
+        }
     }
     while (begin < end && ascii_space(source[begin])) {
         ++begin;
@@ -216,6 +358,12 @@ static bool parse_code(const char *source,
         return false;
     }
 
+    if (!parse_hex_exact(source, code_begin, 4, &parsed_code) ||
+        !parse_hex_exact(source, address_begin, 8, address) ||
+        !parse_hex_exact(source, value_begin, 8, value)) {
+        *diagnostics |= VC_PSV_DIAGNOSTIC_LEXICAL_ERROR;
+        return false;
+    }
     *code = (uint16_t)parsed_code;
     return true;
 }
@@ -232,11 +380,13 @@ static void store_line(vc_psv_line *lines,
         return;
     }
 
+    memset(&lines[index], 0, sizeof(lines[index]));
     lines[index].raw.offset = (uint32_t)raw_begin;
     lines[index].raw.length = (uint32_t)(raw_end - raw_begin);
     lines[index].content.offset = (uint32_t)content_begin;
     lines[index].content.length = (uint32_t)(content_end - content_begin);
     lines[index].kind = VC_PSV_LINE_OPAQUE;
+    lines[index].record_role = VC_PSV_RECORD_NOT_APPLICABLE;
     lines[index].cheat_index = VC_PSV_NO_INDEX;
     lines[index].operation_index = VC_PSV_NO_INDEX;
 }
@@ -261,11 +411,34 @@ static void taint_active_cheat(vc_psv_cheat *cheats,
     }
 }
 
+static void diagnose_active_cheat(vc_psv_cheat *cheats,
+                                  size_t cheat_capacity,
+                                  size_t active_cheat,
+                                  uint32_t diagnostics)
+{
+    if (active_cheat < cheat_capacity) {
+        cheats[active_cheat].diagnostics |= diagnostics;
+    }
+}
+
+static void diagnose_operation(vc_psv_operation *operations,
+                               size_t operation_capacity,
+                               size_t operation_index,
+                               uint32_t diagnostics)
+{
+    if (operation_index < operation_capacity) {
+        operations[operation_index].diagnostics |= diagnostics;
+    }
+}
+
 static void finalize_active_cheat(vc_psv_cheat *cheats,
                                   size_t cheat_capacity,
                                   size_t active_cheat,
                                   bool repeat_continuation_pending,
                                   size_t pointer_records_remaining,
+                                  vc_psv_operation *operations,
+                                  size_t operation_capacity,
+                                  size_t pending_root,
                                   bool *active_cheat_tainted,
                                   vc_psv_report *report)
 {
@@ -273,6 +446,12 @@ static void finalize_active_cheat(vc_psv_cheat *cheats,
         (repeat_continuation_pending ||
          pointer_records_remaining != 0)) {
         ++report->invalid_operation_sequences;
+        ++report->truncated_spans;
+        diagnose_active_cheat(cheats, cheat_capacity, active_cheat,
+                              VC_PSV_DIAGNOSTIC_TRUNCATED_SPAN);
+        diagnose_operation(operations, operation_capacity, pending_root,
+                           VC_PSV_DIAGNOSTIC_TRUNCATED_SPAN |
+                               VC_PSV_DIAGNOSTIC_CANONICAL_EMISSION_BLOCKED);
         taint_active_cheat(cheats, cheat_capacity, active_cheat,
                            VC_PSV_TRANSLATION_MALFORMED,
                            active_cheat_tainted, report);
@@ -298,15 +477,17 @@ static void discard_partial_outputs(vc_psv_line *lines,
     report->stored_operations = 0;
 }
 
-vc_psv_status vc_psv_parse(const char *source,
-                           size_t source_size,
-                           vc_psv_line *lines,
-                           size_t line_capacity,
-                           vc_psv_cheat *cheats,
-                           size_t cheat_capacity,
-                           vc_psv_operation *operations,
-                           size_t operation_capacity,
-                           vc_psv_report *report)
+vc_psv_status vc_psv_parse_with_options(
+    const char *source,
+    size_t source_size,
+    const vc_psv_parse_options *options,
+    vc_psv_line *lines,
+    size_t line_capacity,
+    vc_psv_cheat *cheats,
+    size_t cheat_capacity,
+    vc_psv_operation *operations,
+    size_t operation_capacity,
+    vc_psv_report *report)
 {
     size_t position = 0;
     size_t active_cheat = VC_PSV_NO_INDEX;
@@ -318,14 +499,22 @@ vc_psv_status vc_psv_parse(const char *source,
     bool relative_base_active = false;
     bool repeat_continuation_pending = false;
     size_t pointer_records_remaining = 0;
+    size_t pending_root = VC_PSV_NO_INDEX;
     uint8_t relative_module_serial = 0;
     uint8_t relative_segment_index = 0;
+    vc_psv_source_encoding source_encoding;
     vc_psv_report result;
 
     if (report == NULL || (source == NULL && source_size != 0) ||
         (lines == NULL && line_capacity != 0) ||
         (cheats == NULL && cheat_capacity != 0) ||
-        (operations == NULL && operation_capacity != 0)) {
+        (operations == NULL && operation_capacity != 0) ||
+        (options != NULL &&
+         options->legacy_fallback != VC_PSV_LEGACY_ENCODING_NONE &&
+         options->legacy_fallback !=
+             VC_PSV_LEGACY_ENCODING_WINDOWS_1252 &&
+         options->legacy_fallback !=
+             VC_PSV_LEGACY_ENCODING_ISO_8859_1)) {
         return VC_PSV_STATUS_INVALID_ARGUMENT;
     }
     if (source_size > (size_t)VC_PSV_MAX_SOURCE_BYTES) {
@@ -348,9 +537,14 @@ vc_psv_status vc_psv_parse(const char *source,
         ranges_overlap(operations, operation_bytes, report, sizeof(*report))) {
         return VC_PSV_STATUS_INVALID_ARGUMENT;
     }
+    if (!select_source_encoding(source, source_size, options,
+                                &source_encoding)) {
+        return VC_PSV_STATUS_INVALID_ENCODING;
+    }
 
     memset(&result, 0, sizeof(result));
     result.schema_version = VC_PSV_IMPORT_SCHEMA_VERSION;
+    result.source_encoding = source_encoding;
     result.source_size = source_size;
 
     while (position < source_size) {
@@ -415,17 +609,33 @@ vc_psv_status vc_psv_parse(const char *source,
             const char activation = source[trimmed_begin + 2u];
             size_t description_begin = trimmed_begin + 3u;
             const size_t cheat_index = result.total_cheats;
+            bool noncanonical_header = false;
 
             finalize_active_cheat(cheats, cheat_capacity, active_cheat,
                                   repeat_continuation_pending,
                                   pointer_records_remaining,
+                                  operations, operation_capacity,
+                                  pending_root,
                                   &active_cheat_tainted, &result);
+            if (activation == '0' &&
+                trimmed_end - description_begin >=
+                    sizeof("---Alternative") - 1u &&
+                memcmp(source + description_begin, "---Alternative",
+                       sizeof("---Alternative") - 1u) == 0) {
+                noncanonical_header = true;
+            }
             if ((activation != '0' && activation != '1') ||
-                (description_begin < trimmed_end && !ascii_space(source[description_begin]))) {
+                (description_begin < trimmed_end &&
+                 !ascii_space(source[description_begin]) &&
+                 !noncanonical_header)) {
                 if (stored_line != NULL) {
                     stored_line->kind = VC_PSV_LINE_MALFORMED;
+                    stored_line->diagnostics =
+                        VC_PSV_DIAGNOSTIC_LEXICAL_ERROR |
+                        VC_PSV_DIAGNOSTIC_CANONICAL_EMISSION_BLOCKED;
                 }
                 ++result.malformed_lines;
+                ++result.lexical_errors;
                 taint_active_cheat(cheats, cheat_capacity, active_cheat,
                                    VC_PSV_TRANSLATION_MALFORMED,
                                    &active_cheat_tainted, &result);
@@ -435,44 +645,71 @@ vc_psv_status vc_psv_parse(const char *source,
                 relative_base_active = false;
                 repeat_continuation_pending = false;
                 pointer_records_remaining = 0;
+                pending_root = VC_PSV_NO_INDEX;
                 relative_module_serial = 0;
                 relative_segment_index = 0;
                 continue;
             }
-            while (description_begin < trimmed_end && ascii_space(source[description_begin])) {
+            while (description_begin < trimmed_end &&
+                   ascii_space(source[description_begin])) {
                 ++description_begin;
             }
 
             if (cheat_index < cheat_capacity) {
+                memset(&cheats[cheat_index], 0, sizeof(cheats[cheat_index]));
                 cheats[cheat_index].activation = activation == '1'
                                                       ? VC_PSV_ACTIVATION_AUTOSTART
                                                       : VC_PSV_ACTIVATION_MANUAL;
-                cheats[cheat_index].translation_state = VC_PSV_TRANSLATION_DIRECT_ONLY;
+                cheats[cheat_index].translation_state =
+                    noncanonical_header
+                        ? VC_PSV_TRANSLATION_REQUIRES_COMPATIBILITY
+                        : VC_PSV_TRANSLATION_DIRECT_ONLY;
                 cheats[cheat_index].description.offset = (uint32_t)description_begin;
                 cheats[cheat_index].description.length =
                     (uint32_t)(trimmed_end - description_begin);
                 cheats[cheat_index].header_line_index = line_index;
                 cheats[cheat_index].first_operation_index = result.total_operations;
                 cheats[cheat_index].operation_count = 0;
+                cheats[cheat_index].diagnostics =
+                    noncanonical_header
+                        ? VC_PSV_DIAGNOSTIC_NONCANONICAL_HEADER |
+                              VC_PSV_DIAGNOSTIC_CANONICAL_EMISSION_BLOCKED
+                        : VC_PSV_DIAGNOSTIC_NONE;
                 ++result.stored_cheats;
             }
             if (stored_line != NULL) {
                 stored_line->kind = VC_PSV_LINE_CHEAT_HEADER;
                 stored_line->cheat_index = cheat_index;
+                if (noncanonical_header) {
+                    stored_line->diagnostics =
+                        VC_PSV_DIAGNOSTIC_NONCANONICAL_HEADER |
+                        VC_PSV_DIAGNOSTIC_CANONICAL_EMISSION_BLOCKED;
+                }
+            }
+            if (noncanonical_header) {
+                ++result.noncanonical_headers;
+                ++result.non_direct_cheats;
             }
             if (trimmed_end - description_begin > VC_PSV_LEGACY_MAX_DESCRIPTION_BYTES) {
                 ++result.legacy_limit_violations;
+                diagnose_active_cheat(
+                    cheats, cheat_capacity, cheat_index,
+                    VC_PSV_DIAGNOSTIC_AUTHORING_LIMIT);
             }
             ++result.total_cheats;
             if (result.total_cheats == VC_PSV_LEGACY_MAX_CHEATS + 1u) {
                 ++result.legacy_limit_violations;
+                diagnose_active_cheat(
+                    cheats, cheat_capacity, cheat_index,
+                    VC_PSV_DIAGNOSTIC_AUTHORING_LIMIT);
             }
             active_cheat = cheat_index;
             active_cheat_operation_count = 0;
-            active_cheat_tainted = false;
+            active_cheat_tainted = noncanonical_header;
             relative_base_active = false;
             repeat_continuation_pending = false;
             pointer_records_remaining = 0;
+            pending_root = VC_PSV_NO_INDEX;
             relative_module_serial = 0;
             relative_segment_index = 0;
             continue;
@@ -483,21 +720,66 @@ vc_psv_status vc_psv_parse(const char *source,
             uint32_t address = 0;
             uint32_t value = 0;
             uint32_t flags = VC_PSV_OPERATION_FLAG_NONE;
+            uint32_t diagnostics = VC_PSV_DIAGNOSTIC_NONE;
             vc_psv_operation_kind kind;
             vc_psv_address_mode address_mode = VC_PSV_ADDRESS_NOT_APPLICABLE;
+            vc_psv_record_role record_role;
             const size_t operation_index = result.total_operations;
+            const bool in_continuation =
+                repeat_continuation_pending ||
+                pointer_records_remaining != 0;
+            const bool has_trailing_whitespace =
+                content_end > content_begin &&
+                ascii_space(source[content_end - 1u]);
+            bool parsed;
 
-            if (active_cheat == VC_PSV_NO_INDEX ||
-                !parse_code(source, trimmed_begin, trimmed_end, &code, &address,
-                            &value, &flags)) {
-                if (repeat_continuation_pending ||
-                    pointer_records_remaining != 0) {
+            ++result.physical_records;
+            record_role = in_continuation
+                              ? VC_PSV_RECORD_CONTINUATION
+                              : active_cheat == VC_PSV_NO_INDEX
+                                    ? VC_PSV_RECORD_UNKNOWN
+                                    : VC_PSV_RECORD_TOP_LEVEL;
+            parsed = parse_code(source, trimmed_begin, trimmed_end,
+                                &code, &address, &value, &flags,
+                                &diagnostics);
+            if (active_cheat == VC_PSV_NO_INDEX || !parsed) {
+                if (active_cheat == VC_PSV_NO_INDEX) {
+                    diagnostics |= VC_PSV_DIAGNOSTIC_ORPHAN_RECORD |
+                                   VC_PSV_DIAGNOSTIC_CANONICAL_EMISSION_BLOCKED;
+                }
+                if (!parsed) {
+                    diagnostics |= VC_PSV_DIAGNOSTIC_LEXICAL_ERROR |
+                                   VC_PSV_DIAGNOSTIC_CANONICAL_EMISSION_BLOCKED;
+                    ++result.lexical_errors;
+                }
+                if (has_trailing_whitespace) {
+                    ++result.trailing_whitespace_records;
+                }
+                if (in_continuation) {
                     ++result.invalid_operation_sequences;
-                    repeat_continuation_pending = false;
-                    pointer_records_remaining = 0;
+                    if (repeat_continuation_pending) {
+                        repeat_continuation_pending = false;
+                    } else {
+                        --pointer_records_remaining;
+                    }
+                    diagnose_operation(
+                        operations, operation_capacity, pending_root,
+                        diagnostics);
+                    diagnose_active_cheat(
+                        cheats, cheat_capacity, active_cheat, diagnostics);
+                    ++result.continuation_records;
+                    if (!repeat_continuation_pending &&
+                        pointer_records_remaining == 0) {
+                        pending_root = VC_PSV_NO_INDEX;
+                    }
+                } else {
+                    ++result.unknown_records;
                 }
                 if (stored_line != NULL) {
                     stored_line->kind = VC_PSV_LINE_MALFORMED;
+                    stored_line->record_role = record_role;
+                    stored_line->diagnostics = diagnostics;
+                    stored_line->cheat_index = active_cheat;
                 }
                 ++result.malformed_lines;
                 taint_active_cheat(cheats, cheat_capacity, active_cheat,
@@ -515,9 +797,49 @@ vc_psv_status vc_psv_parse(const char *source,
             } else {
                 kind = operation_kind(code, &flags);
             }
+            if (record_role == VC_PSV_RECORD_CONTINUATION) {
+                ++result.continuation_records;
+            } else {
+                ++result.top_level_records;
+            }
+            if (kind == VC_PSV_OPERATION_POINTER_POSITIONAL &&
+                (code == UINT16_C(0x3302) ||
+                 code == UINT16_C(0x7402) ||
+                 code == UINT16_C(0x9000))) {
+                diagnostics |= VC_PSV_DIAGNOSTIC_NONCANONICAL_MARKER |
+                               VC_PSV_DIAGNOSTIC_CANONICAL_EMISSION_BLOCKED;
+            }
+            if ((kind == VC_PSV_OPERATION_POINTER_WRITE ||
+                 kind == VC_PSV_OPERATION_POINTER_REPEAT ||
+                 kind == VC_PSV_OPERATION_POINTER_MOVE) &&
+                (code & UINT16_C(0x000f)) >
+                     VC_PSV_CANONICAL_POINTER_LEVELS &&
+                (code & UINT16_C(0x000f)) <= UINT16_C(8)) {
+                diagnostics |= VC_PSV_DIAGNOSTIC_NONCANONICAL_LEVEL |
+                               VC_PSV_DIAGNOSTIC_CANONICAL_EMISSION_BLOCKED;
+            }
+            if ((flags &
+                 VC_PSV_OPERATION_FLAG_NONCANONICAL_REPEAT) != 0) {
+                diagnostics |= VC_PSV_DIAGNOSTIC_NONCANONICAL_SUFFIX |
+                               VC_PSV_DIAGNOSTIC_CANONICAL_EMISSION_BLOCKED;
+            }
+            if ((flags &
+                 VC_PSV_OPERATION_FLAG_NONCANONICAL_PATCH_U8) != 0) {
+                diagnostics |= VC_PSV_DIAGNOSTIC_NONCANONICAL_WIDTH |
+                               VC_PSV_DIAGNOSTIC_CANONICAL_EMISSION_BLOCKED;
+            }
+            if ((flags & VC_PSV_OPERATION_FLAG_INLINE_COMMENT) != 0) {
+                diagnostics |=
+                    VC_PSV_DIAGNOSTIC_CANONICAL_EMISSION_BLOCKED;
+            }
             if (kind == VC_PSV_OPERATION_SELECT_MODULE_BASE) {
                 if (address > UINT32_C(1) || value != UINT32_C(0)) {
                     ++result.invalid_operation_sequences;
+                    diagnostics |=
+                        VC_PSV_DIAGNOSTIC_INVALID_MODULE_SELECTOR |
+                        VC_PSV_DIAGNOSTIC_CANONICAL_EMISSION_BLOCKED;
+                    diagnose_active_cheat(
+                        cheats, cheat_capacity, active_cheat, diagnostics);
                     taint_active_cheat(cheats, cheat_capacity, active_cheat,
                                        VC_PSV_TRANSLATION_MALFORMED,
                                        &active_cheat_tainted, &result);
@@ -534,36 +856,70 @@ vc_psv_status vc_psv_parse(const char *source,
                                    ? VC_PSV_ADDRESS_SELECTED_MODULE_RELATIVE
                                    : VC_PSV_ADDRESS_ABSOLUTE;
             }
+            if (address_mode ==
+                    VC_PSV_ADDRESS_SELECTED_MODULE_RELATIVE ||
+                kind == VC_PSV_OPERATION_POINTER_WRITE ||
+                kind == VC_PSV_OPERATION_POINTER_REPEAT ||
+                kind == VC_PSV_OPERATION_POINTER_MOVE) {
+                diagnostics |=
+                    VC_PSV_DIAGNOSTIC_RUNTIME_DEPENDENT_ADDRESS;
+            }
             if (kind == VC_PSV_OPERATION_REPEAT) {
                 repeat_continuation_pending = true;
+                pending_root = operation_index;
             } else if (kind == VC_PSV_OPERATION_POINTER_WRITE) {
                 pointer_records_remaining =
                     (size_t)(code & UINT16_C(0x000f));
+                if (pointer_records_remaining != 0) {
+                    pending_root = operation_index;
+                }
             } else if (kind == VC_PSV_OPERATION_POINTER_REPEAT) {
                 const size_t levels =
                     (size_t)(code & UINT16_C(0x000f));
                 pointer_records_remaining =
                     levels == 0 ? 0 : levels + 1u;
+                if (pointer_records_remaining != 0) {
+                    pending_root = operation_index;
+                }
             } else if (kind == VC_PSV_OPERATION_POINTER_MOVE) {
                 const size_t levels =
                     (size_t)(code & UINT16_C(0x000f));
                 pointer_records_remaining =
                     levels == 0 ? 0 : levels * 2u + 1u;
+                if (pointer_records_remaining != 0) {
+                    pending_root = operation_index;
+                }
+            } else if (!repeat_continuation_pending &&
+                       pointer_records_remaining == 0) {
+                pending_root = VC_PSV_NO_INDEX;
             }
-            if (flags != VC_PSV_OPERATION_FLAG_NONE) {
+            if ((flags & VC_PSV_OPERATION_FLAG_INLINE_COMMENT) != 0) {
+                ++result.inline_comments;
+            } else if (has_trailing_whitespace) {
+                ++result.trailing_whitespace_records;
+            }
+            if ((flags & (VC_PSV_OPERATION_FLAG_INLINE_COMMENT |
+                          VC_PSV_OPERATION_FLAG_NONCANONICAL_REPEAT |
+                          VC_PSV_OPERATION_FLAG_NONCANONICAL_PATCH_U8)) != 0) {
                 ++result.compatibility_operations;
                 taint_active_cheat(cheats, cheat_capacity, active_cheat,
                                    VC_PSV_TRANSLATION_REQUIRES_COMPATIBILITY,
                                    &active_cheat_tainted, &result);
             }
+            diagnose_active_cheat(cheats, cheat_capacity, active_cheat,
+                                  diagnostics);
 
             if (operation_index < operation_capacity) {
+                memset(&operations[operation_index], 0,
+                       sizeof(operations[operation_index]));
                 operations[operation_index].kind = kind;
                 operations[operation_index].address_mode = address_mode;
                 operations[operation_index].legacy_code = code;
                 operations[operation_index].address = address;
                 operations[operation_index].value = value;
                 operations[operation_index].flags = flags;
+                operations[operation_index].diagnostics = diagnostics;
+                operations[operation_index].record_role = record_role;
                 operations[operation_index].module_serial =
                     address_mode == VC_PSV_ADDRESS_SELECTED_MODULE_RELATIVE
                         ? relative_module_serial
@@ -578,11 +934,22 @@ vc_psv_status vc_psv_parse(const char *source,
             }
             if (stored_line != NULL) {
                 stored_line->kind = VC_PSV_LINE_CODE;
+                stored_line->record_role = record_role;
+                stored_line->diagnostics = diagnostics;
                 stored_line->cheat_index = active_cheat;
                 stored_line->operation_index = operation_index;
             }
             if (kind == VC_PSV_OPERATION_OPAQUE) {
                 ++result.unsupported_operations;
+                diagnostics |= VC_PSV_DIAGNOSTIC_UNSUPPORTED_OPCODE |
+                               VC_PSV_DIAGNOSTIC_CANONICAL_EMISSION_BLOCKED;
+                diagnose_operation(operations, operation_capacity,
+                                   operation_index, diagnostics);
+                if (stored_line != NULL) {
+                    stored_line->diagnostics = diagnostics;
+                }
+                diagnose_active_cheat(cheats, cheat_capacity, active_cheat,
+                                      diagnostics);
                 taint_active_cheat(cheats, cheat_capacity, active_cheat,
                                    VC_PSV_TRANSLATION_REQUIRES_UNSUPPORTED,
                                    &active_cheat_tainted, &result);
@@ -595,6 +962,9 @@ vc_psv_status vc_psv_parse(const char *source,
             if (active_cheat_operation_count ==
                 VC_PSV_LEGACY_MAX_CODES_PER_CHEAT + 1u) {
                 ++result.legacy_limit_violations;
+                diagnose_active_cheat(
+                    cheats, cheat_capacity, active_cheat,
+                    VC_PSV_DIAGNOSTIC_AUTHORING_LIMIT);
             }
             continue;
         }
@@ -611,6 +981,7 @@ vc_psv_status vc_psv_parse(const char *source,
     finalize_active_cheat(cheats, cheat_capacity, active_cheat,
                           repeat_continuation_pending,
                           pointer_records_remaining,
+                          operations, operation_capacity, pending_root,
                           &active_cheat_tainted, &result);
     if (result.stored_lines != result.total_lines ||
         result.stored_cheats != result.total_cheats ||
@@ -621,4 +992,80 @@ vc_psv_status vc_psv_parse(const char *source,
     }
     *report = result;
     return VC_PSV_STATUS_OK;
+}
+
+vc_psv_status vc_psv_parse(const char *source,
+                           size_t source_size,
+                           vc_psv_line *lines,
+                           size_t line_capacity,
+                           vc_psv_cheat *cheats,
+                           size_t cheat_capacity,
+                           vc_psv_operation *operations,
+                           size_t operation_capacity,
+                           vc_psv_report *report)
+{
+    return vc_psv_parse_with_options(
+        source, source_size, NULL, lines, line_capacity, cheats,
+        cheat_capacity, operations, operation_capacity, report);
+}
+
+vc_psv_emit_status vc_psv_emit_lossless(
+    const char *source,
+    size_t source_size,
+    const vc_psv_line *lines,
+    size_t line_count,
+    char *output,
+    size_t output_capacity,
+    size_t *required_size)
+{
+    size_t expected_offset = 0;
+    size_t line_bytes;
+    size_t index;
+
+    if (required_size == NULL ||
+        (source == NULL && source_size != 0) ||
+        (lines == NULL && line_count != 0) ||
+        (output == NULL && output_capacity != 0)) {
+        return VC_PSV_EMIT_INVALID_ARGUMENT;
+    }
+    if (!multiply_size(line_count, sizeof(*lines), &line_bytes) ||
+        ranges_overlap(required_size, sizeof(*required_size),
+                       source, source_size) ||
+        ranges_overlap(required_size, sizeof(*required_size),
+                       lines, line_bytes) ||
+        ranges_overlap(required_size, sizeof(*required_size),
+                       output, output_capacity)) {
+        return VC_PSV_EMIT_INVALID_ARGUMENT;
+    }
+    *required_size = source_size;
+    for (index = 0; index < line_count; ++index) {
+        const vc_psv_line *line = &lines[index];
+        size_t raw_end;
+        size_t content_end;
+
+        if (line->raw.offset != expected_offset ||
+            line->raw.length > source_size - expected_offset ||
+            line->content.offset < line->raw.offset ||
+            line->content.offset > source_size ||
+            line->content.length > source_size - line->content.offset) {
+            return VC_PSV_EMIT_INVALID_SPANS;
+        }
+        raw_end = (size_t)line->raw.offset + (size_t)line->raw.length;
+        content_end =
+            (size_t)line->content.offset + (size_t)line->content.length;
+        if (content_end > raw_end) {
+            return VC_PSV_EMIT_INVALID_SPANS;
+        }
+        expected_offset = raw_end;
+    }
+    if (expected_offset != source_size) {
+        return VC_PSV_EMIT_INVALID_SPANS;
+    }
+    if (output_capacity < source_size) {
+        return VC_PSV_EMIT_OUTPUT_TOO_SMALL;
+    }
+    if (source_size != 0) {
+        memmove(output, source, source_size);
+    }
+    return VC_PSV_EMIT_OK;
 }
