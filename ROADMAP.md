@@ -20,6 +20,9 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
       attestation, sequenced foreground snapshots, exact copy boundaries,
       fail-closed copy-out retry, lifecycle cleanup, and nonblocking
       serialization.
+- [x] Allocation-free Quick Menu launcher controller with a one-slot deferred
+      callback handoff, exact submit/status-only requests, trusted snapshot
+      revalidation, bounded status, and transactional resource cleanup.
 - [x] Add sanitizer, fuzz, and property-based CI coverage.
 - [ ] Add snapshot/session file formats with strict version and size limits.
 
@@ -76,8 +79,9 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
 - [x] Host-test the launch-only kernel-service policy boundary, including
       caller/process/module attestation inputs, PID-generation reuse, title
       switches, copy faults, response retries, stop/reset, and reentrancy.
-- [ ] Send only a short-lived, generation-bound open request from the Quick Menu;
-      never grant it read, pause, write, or freeze authority.
+- [x] Host-test sending only a short-lived, generation-bound open request from
+      the Quick Menu controller; never grant it read, pause, write, or freeze
+      authority.
 - [ ] Let the matching injected game plugin claim the request after the system
       overlay closes, then render the menu only after compatibility checks pass.
 - [ ] In the kernel adapter, build an explicit gameplay-thread allowlist that
@@ -146,6 +150,12 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
 - [x] Implement the portable launch-only service core and precise platform
       adapter callback contract. Native Vita syscall/export glue, caller
       identity derivation, and foreground discovery remain unimplemented.
+- [x] Implement the portable add-on-side launcher controller and host-test
+      resource registration/rollback, deferred work, status refresh, stale
+      callback rejection, and malformed transport responses.
+- [ ] Resolve the missing public QuickMenuReborn runtime-version probe and
+      implement an attested SceShell-to-kernel transport before adding the
+      optional native `.suprx` target.
 - [ ] Keep parsing, rendering, protocol handling, and database logic out of
       kernel context.
 - [ ] Validate process-generation binding, unload, title exit, suspend/resume,

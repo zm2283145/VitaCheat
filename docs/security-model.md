@@ -20,7 +20,9 @@ enumerate or suspend a real thread on its own. The portable Quick Menu broker
 and service similarly validate and serialize launch state. The service consumes
 only injected exact-copy, caller-attestation, foreground-snapshot, and cleanup
 callbacks; no Vita syscall implementation, process discovery, hook, injection,
-or memory authority is present.
+or memory authority is present. The portable Quick Menu launcher controller
+likewise acts only through injected UI, worker, snapshot, clock, and transport
+callbacks and has no native SceShell or kernel dependency.
 
 ## Authority model
 
@@ -77,11 +79,32 @@ or memory authority is present.
   even when platform cleanup reports failure.
 - The v1 operation and capability sets remain launch-only. Unknown future
   memory, pause, search, patch, or freeze operations/bits fail closed.
+- The add-on-side controller has one fixed action slot. Its UI callback only
+  captures and revalidates trusted foreground metadata and signals one worker;
+  one worker tick can issue at most one transport call.
+- The controller emits only exact v1 `SceShell` `SUBMIT/LAUNCH` and
+  `STATUS/STATUS` envelopes through the existing codec. It exposes no generic
+  operation pass-through and has no claim, cancel, memory, pause, write,
+  freeze, search, patch, renderer, or hardware interface.
+- Snapshot sequence, PID, nonzero generation, and normalized bounded title
+  identity must remain byte-identical before queueing, before request
+  construction, after clock acquisition, and after transport. A mismatch
+  discards local work and presents only a non-sensitive stale-title state.
+- Adapter callbacks run outside the controller's nonblocking transaction gate.
+  Reentry is rejected as busy. Resource registration is transactional; stop
+  invalidates callback generations and local work before reverse cleanup, and
+  failed cleanup tokens remain retryable while the controller stays stopped.
+- Public launcher status strings disclose no target, title, request, process,
+  module, generation, nonce, kernel, or memory identity. A pending request is
+  described only as waiting for the game to claim it.
 
-The portable broker/ABI and launch-only service policy are implemented. Native
-QuickMenuReborn widgets, SceShell hooks, Vita service syscalls/exports, concrete
-caller identity derivation, game-plugin injection, and presentation adapters
-remain unavailable.
+The portable broker/ABI, launch-only service policy, and add-on controller are
+implemented. Native QuickMenuReborn widgets remain blocked because the pinned
+public API has no runtime version query, and native service transport remains
+blocked because QuickMenuReborn documents no kernel bridge. SceShell hooks,
+Vita service syscalls/exports, concrete caller identity derivation,
+game-plugin injection, and presentation adapters remain unavailable; no
+firmware-offset fallback is permitted.
 
 ## Menu pause rules
 

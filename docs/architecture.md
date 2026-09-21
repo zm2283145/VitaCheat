@@ -29,7 +29,10 @@ The portable core also owns authority-free helpers:
   status; and
 - a launch-only service front door that owns trusted caller attestation,
   sequenced foreground snapshots, exact user-copy boundaries, lifecycle
-  dispatch, nonblocking serialization, and copy-out recovery.
+  dispatch, nonblocking serialization, and copy-out recovery; and
+- a launch-only Quick Menu controller that owns one bounded callback-to-worker
+  handoff, exact foreground revalidation, submit/status transport, bounded
+  public status, and transactional UI-resource cleanup.
 
 None of these helpers reads controller hardware, enumerates or suspends threads,
 opens files, renders UI, or writes memory. Those responsibilities remain in
@@ -104,6 +107,57 @@ documented VitaSDK/taiHEN kernel syscall/export scaffold from which a real
 not add native module glue. The existing ordinary user-mode self-test remains
 unchanged.
 
+### Portable Quick Menu launcher controller
+
+`include/vitacheat/quick_menu_launcher.h` models only the unprivileged
+`SceShell` add-on role. Initialization injects an exact UI API-version probe,
+texture/label/widget/callback/worker registration and cleanup, status update,
+worker signal, trusted foreground snapshot, monotonic clock, and launch-service
+transport. A text-only adapter may omit the paired texture callbacks. Every
+other callback is mandatory.
+
+Start probes the exact adapter API before registering anything, then records
+each nonzero resource token. Failure rolls back successful registrations in
+reverse order. Stop disables and generation-invalidates callbacks, scrubs all
+local request/status authority, attempts every cleanup without an unbounded
+wait, remains stopped on failure, and retains only failed tokens for a later
+retry. Destroy clears the controller only after cleanup succeeds.
+
+The button callback reads one trusted foreground snapshot, claims one fixed
+queue slot, signals one already-created worker, revalidates the snapshot after
+that handoff, and returns. It never invokes the service transport. Repeated
+presses while queued, in flight, pending, or in a terminal/error state are
+no-ops until an explicit local reset.
+
+One worker step performs at most one transport call. It revalidates the exact
+nonzero snapshot sequence, PID, process generation, and normalized bounded
+title identity before request construction, after clock acquisition, and after
+transport. Any change discards the response and local action. Requests are
+built only through `vc_launch_request_init` and
+`vc_launch_request_encode`: the controller can emit only `SUBMIT` with
+`LAUNCH` or `STATUS` with `STATUS`, both as `SceShell`. A retry retains the
+exact 64 encoded bytes for the service copy-out journal; it never rebuilds the
+request or extends its TTL. A service `BUSY` result is distinct: because no
+mutation occurred, the next bounded step discards the old timestamp and rebuilds
+only after a fresh trusted clock/snapshot check.
+
+Responses must be exactly 72 bytes, decode under the existing v1 codec, match
+the operation, capability, request/target identities and original trusted
+timestamp, and carry a state-consistent status. Only then may local state move
+to pending claim, consumed, expired, or stale. The status formatter writes
+caller-owned bounded storage and never reveals PID, generation, title,
+request ID, nonce, module, kernel, or memory information. “Pending” explicitly
+means waiting for the matching game plugin to claim after Quick Menu closure;
+it never claims that VitaCheat is already open.
+
+The controller uses a nonblocking atomic transaction gate only while accessing
+its own state. Before invoking any adapter it marks the adapter boundary and
+releases that gate; reentrant public mutation is rejected as `BUSY`.
+Registration, foreground, time, transport, status, signal, and cleanup
+callbacks therefore never run under the gate. Adapters must not invoke the
+supplied button or worker callback inline, and their callback-path foreground
+and signal operations must be bounded and nonblocking.
+
 The portable target contract is C11 plus an integer pointer type (`uintptr_t`)
 wide enough to represent object ranges. That holds for the supported Windows
 host and ARM Vita targets and lets the parser reject overlapping source and
@@ -138,16 +192,23 @@ foreground title generation. The request has a unique ID, short expiry, and no
 read, pause, write, or freeze capability. Duplicate requests are idempotent;
 foreground-title changes and expiry discard them.
 
-The portable broker, v1 ABI, and caller-attesting portable service policy
-implementing these rules are present. The QuickMenuReborn widget, SceShell
-transport, Vita caller/foreground adapter, kernel export, and injected game
-plugin described below are not.
+The portable broker, v1 ABI, caller-attesting service policy, and add-on-side
+controller implementing these rules are present. The QuickMenuReborn widget
+adapter, SceShell transport, Vita caller/foreground adapter, kernel export, and
+injected game plugin described below are not.
 
 The QuickMenuReborn public widget API is preferred over direct SceShell offset
-patching. The add-on uses weak imports, registers all widgets and textures
-during start, and unregisters each resource before stop. If the pinned
-QuickMenuReborn interface is unavailable, the launcher reports unavailable and
-does not attempt an undocumented fallback.
+patching. Clean-room research pins the MIT API to
+`Ibrahim778/QuickMenuReborn@a3e067e630722bab6f6e245e587243390519a052`;
+its public NID table defines the required widget, label, event, and unregister
+symbols, and
+`M-Essa11/FTP-for-Vita@20080107e116a524605f023f5b72898c9b59e57b`
+confirms their VitaSDK weak-stub lifecycle. QuickMenuReborn exposes no public
+runtime version query, however, and its documentation explicitly has no kernel
+bridge. Until exact runtime compatibility and an attested transport can be
+verified end to end, this repository does not vendor those declarations or
+generate a native `.suprx`. It does not fall back to direct firmware-specific
+SceShell patches.
 
 The injected game plugin owns display hooks, menu rendering/navigation, search
 state, configuration, and on-device approval. It can claim a pending request

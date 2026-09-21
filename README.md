@@ -10,8 +10,9 @@ allocation-free memory snapshot search/refinement core, a lossless legacy
 VitaCheat `.psv` importer, and a deterministic menu-activation state machine,
 plus a transactional gameplay-thread pause coordinator and a versioned,
 allocation-free Quick Menu launch-request broker, plus a caller-attesting,
-copy-bounded portable launch service front door, all with host tests. A
-separate ordinary user-mode Vita self-test now exercises the scanner and
+copy-bounded portable launch service front door and a host-testable,
+allocation-free Quick Menu launcher controller, all with host tests. A separate
+ordinary user-mode Vita self-test now exercises the scanner and
 five-second Select menu against memory owned by that test app. It is not a
 plugin and does not attach to a process, suspend another application's threads,
 read or write another application's memory, freeze values, connect over a
@@ -88,12 +89,25 @@ The same portable milestone now also:
   reset, or stop;
 - serializes calls with a nonblocking C11 atomic transaction gate and journals
   an exact response across copy-out failure so a caller can retry without
-  repeating or hiding an authority change.
+  repeating or hiding an authority change;
+- models the launch-only `SceShell` add-on lifecycle through injected UI,
+  worker, trusted-foreground, clock, and transport adapters;
+- keeps the UI callback bounded to one foreground-bound queue slot and one
+  worker signal, with service transport deferred to a one-operation worker
+  step;
+- emits only broker v1 `SUBMIT` and `STATUS` requests for the
+  `SceShell` role, revalidates the exact snapshot sequence, PID, generation,
+  and bounded title identity across every asynchronous boundary, and exposes
+  only non-sensitive bounded status text; and
+- registers and unwinds texture, label, widget, callback, and worker tokens
+  transactionally, retaining failed cleanup tokens for an explicit retry while
+  remaining stopped.
 
-The pause coordinator, launch broker, and launch service have no platform
-authority by themselves; their process identity, foreground, copy, and cleanup
-operations are injected by a future privileged adapter. No imported operation
-is executed in this milestone. See
+The pause coordinator, launch broker, launch service, and launcher controller
+have no platform authority by themselves; process identity, foreground,
+copy/transport, UI, worker, clock, and cleanup operations are injected by
+future native adapters. No imported operation is executed in this milestone.
+See
 [docs/legacy-psv-compatibility.md](docs/legacy-psv-compatibility.md).
 
 The first Vita-facing build is the deliberately unprivileged and now
@@ -153,9 +167,9 @@ plugin, input, rendering, watchdog, and cleanup paths remain runnable.
 The existing five-second Select state machine remains a tested self-test and
 recovery component, but is no longer the planned production launcher. A generic
 cross-title overlay is still unproven and will not be claimed until renderer
-hooks and cleanup pass hardware gates. The portable broker and byte ABI are now
-implemented; the QuickMenuReborn add-on, kernel/user adapters, injected plugin,
-and all Vita-native transport are not.
+hooks and cleanup pass hardware gates. The portable broker, byte ABI, service boundary, and add-on-side controller are
+implemented. A native QuickMenuReborn module, kernel/user adapters, injected
+plugin, and all Vita-native transport are not.
 
 The online database will supply bounded declarative records, never executable
 scripts. The kernel service must expose a narrow versioned ABI and pass a
@@ -195,9 +209,11 @@ ctest --test-dir build-sanitize --output-on-failure
 For bounded libFuzzer coverage, add `-DVITACHEAT_BUILD_FUZZERS=ON` and run
 `build-sanitize/vitacheat_search_fuzzer -runs=10000 -max_len=520` plus
 `build-sanitize/vitacheat_launch_broker_fuzzer -runs=10000 -max_len=512` and
-`build-sanitize/vitacheat_launch_service_fuzzer -runs=10000 -max_len=512`.
-A dependency-free deterministic service smoke is also available as
-`make launch-service-fuzz-smoke`.
+`build-sanitize/vitacheat_launch_service_fuzzer -runs=10000 -max_len=512` and
+`build-sanitize/vitacheat_quick_menu_launcher_fuzzer -runs=10000 -max_len=512`.
+Dependency-free deterministic smoke targets are also available as
+`make launch-service-fuzz-smoke` and
+`make quick-menu-launcher-fuzz-smoke`.
 
 VitaSDK is not required to build and run the host tests. Building the Vita
 self-test VPK does require VitaSDK.
@@ -227,11 +243,22 @@ not copy their implementations, assets, fonts, or binaries. See the
 
 Quick Menu integration will target the MIT-licensed
 [QuickMenuReborn](https://github.com/Ibrahim778/QuickMenuReborn) public widget
-API. [FTP for Vita](https://github.com/M-Essa11/FTP-for-Vita) demonstrates a
-clean register/callback/unregister lifecycle for an add-on. GPLv3
+API pinned for research at
+[`a3e067e630722bab6f6e245e587243390519a052`](https://github.com/Ibrahim778/QuickMenuReborn/tree/a3e067e630722bab6f6e245e587243390519a052).
+[FTP for Vita](https://github.com/M-Essa11/FTP-for-Vita/tree/20080107e116a524605f023f5b72898c9b59e57b)
+at `20080107e116a524605f023f5b72898c9b59e57b` demonstrates a clean
+register/callback/unregister lifecycle for an add-on. GPLv3
 [QuickMenuPlus](https://github.com/PsArchive/QuickMenuPlus) is used only as a
 behavioral reference; VitaCheat will not copy its firmware-specific SceShell
 patches.
+
+The pinned QuickMenuReborn NID table publicly defines the needed widget,
+label, event, and unregister calls, but exposes no runtime interface-version
+query. Its own documentation also provides no kernel bridge. Because this
+repository cannot verify both exact runtime compatibility and an attested
+launch-service transport without inventing glue, it deliberately does not
+produce a native `.suprx` yet. No third-party header, stub, source tree, or
+artwork is vendored.
 
 ## Compatibility
 
@@ -249,6 +276,8 @@ listed only after their own gates pass.
 - `include/vitacheat/launch_broker.h` — v1 byte ABI and launch broker contract.
 - `include/vitacheat/launch_service.h` — trusted adapter callbacks, foreground
   lifecycle, service statuses, and fixed-buffer front door.
+- `include/vitacheat/quick_menu_launcher.h` — allocation-free add-on lifecycle,
+  UI/worker/transport adapter contract, and bounded public status model.
 - `src/search.c` — portable little-endian implementation.
 - `src/legacy_psv.c` — syntax indexing and conservative operation mapping.
 - `src/menu_activation.c` — five-second one-shot activation logic.
@@ -256,6 +285,8 @@ listed only after their own gates pass.
 - `src/launch_broker.c` — little-endian codec and launch-request state machine.
 - `src/launch_service.c` — caller attestation, exact copy boundary,
   serialization, lifecycle synchronization, and copy-out result journal.
+- `src/quick_menu_launcher.c` — transactional resource lifecycle, one-slot
+  callback handoff, exact submit/status dispatch, and snapshot revalidation.
 - `tests/host/test_search.c` — native behavioral and boundary tests.
 - `tests/host/test_legacy_psv.c` — mixed-format, truncation, and fail-closed
   importer tests.
@@ -265,9 +296,14 @@ listed only after their own gates pass.
   bounded state-sequence tests.
 - `tests/host/test_launch_service.c` — trusted-metadata, copy-fault, lifecycle,
   retry, reentrancy, and bounded service-model tests.
+- `tests/host/test_quick_menu_launcher.c` — resource rollback, callback
+  idempotence, snapshot races, response validation, status, and reentrancy
+  tests.
 - `tests/fuzz/fuzz_launch_broker.c` — bounded codec/dispatch/lifecycle fuzzer.
 - `tests/fuzz/fuzz_launch_service.c` — bounded untrusted-byte, metadata, copy,
   and service-lifecycle fuzzer.
+- `tests/fuzz/fuzz_quick_menu_launcher.c` — bounded launcher lifecycle,
+  foreground, response, and adapter-failure fuzzer.
 - `vita-self-test/` — ordinary user-mode on-device menu and owned-buffer probe.
 - `docs/architecture.md` — component boundaries and data flow.
 - `docs/legacy-psv-compatibility.md` — compatibility guarantees and limits.
