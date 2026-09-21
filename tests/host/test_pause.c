@@ -25,6 +25,10 @@ typedef struct fake_threads {
     vc_thread_id suspend_failure;
     vc_thread_id resume_failure;
     unsigned int resume_failures_remaining;
+    unsigned int suspend_validation_calls;
+    unsigned int resume_validation_calls;
+    unsigned int fail_suspend_validation_call;
+    unsigned int fail_resume_validation_call;
 } fake_threads;
 
 static void record_event(fake_threads *threads, char operation, vc_thread_id thread_id)
@@ -66,6 +70,36 @@ static vc_pause_operations operations_for(fake_threads *threads)
     operations.resume_thread = resume_thread;
     operations.context = threads;
     return operations;
+}
+
+static bool validate_suspend(void *context)
+{
+    fake_threads *threads = context;
+
+    ++threads->suspend_validation_calls;
+    return threads->fail_suspend_validation_call == 0 ||
+           threads->suspend_validation_calls !=
+               threads->fail_suspend_validation_call;
+}
+
+static bool validate_resume(void *context)
+{
+    fake_threads *threads = context;
+
+    ++threads->resume_validation_calls;
+    return threads->fail_resume_validation_call == 0 ||
+           threads->resume_validation_calls !=
+               threads->fail_resume_validation_call;
+}
+
+static vc_pause_validations validations_for(fake_threads *threads)
+{
+    vc_pause_validations validations;
+
+    validations.validate_suspend = validate_suspend;
+    validations.validate_resume = validate_resume;
+    validations.context = threads;
+    return validations;
 }
 
 static void check_event(const fake_threads *threads,
@@ -315,6 +349,66 @@ static void test_state_thread_list_can_be_reused(void)
     CHECK(vc_pause_end(&state, 21, &operations) == VC_PAUSE_STATUS_OK);
 }
 
+static void test_checked_callback_boundaries(void)
+{
+    const vc_thread_id ids[] = {10, 20};
+    vc_pause_state state;
+    fake_threads threads;
+    vc_pause_operations operations;
+    vc_pause_validations validations;
+
+    memset(&threads, 0, sizeof(threads));
+    threads.fail_suspend_validation_call = 2;
+    operations = operations_for(&threads);
+    validations = validations_for(&threads);
+    vc_pause_state_init(&state);
+    CHECK(vc_pause_begin_checked(
+              &state, 23, 100, 1000, ids, 2,
+              &operations, &validations) ==
+          VC_PAUSE_STATUS_VALIDATION_FAILED);
+    CHECK(!state.active);
+    CHECK(threads.event_count == 2);
+    check_event(&threads, 0, 'S', 10);
+    check_event(&threads, 1, 'R', 10);
+
+    memset(&threads, 0, sizeof(threads));
+    threads.fail_suspend_validation_call = 2;
+    threads.resume_failure = 10;
+    threads.resume_failures_remaining = 1;
+    operations = operations_for(&threads);
+    validations = validations_for(&threads);
+    vc_pause_state_init(&state);
+    CHECK(vc_pause_begin_checked(
+              &state, 24, 100, 1000, ids, 2,
+              &operations, &validations) ==
+          VC_PAUSE_STATUS_ROLLBACK_FAILED);
+    CHECK(state.active);
+    CHECK(state.owned_mask == UINT64_C(1));
+    threads.fail_suspend_validation_call = 0;
+    CHECK(vc_pause_end_checked(
+              &state, 24, &operations, &validations) ==
+          VC_PAUSE_STATUS_OK);
+
+    memset(&threads, 0, sizeof(threads));
+    operations = operations_for(&threads);
+    validations = validations_for(&threads);
+    vc_pause_state_init(&state);
+    CHECK(vc_pause_begin_checked(
+              &state, 25, 100, 1000, ids, 2,
+              &operations, &validations) ==
+          VC_PAUSE_STATUS_OK);
+    threads.fail_resume_validation_call = 1;
+    CHECK(vc_pause_end_checked(
+              &state, 25, &operations, &validations) ==
+          VC_PAUSE_STATUS_VALIDATION_FAILED);
+    CHECK(state.active);
+    CHECK(state.owned_mask == UINT64_C(3));
+    threads.fail_resume_validation_call = 0;
+    CHECK(vc_pause_end_checked(
+              &state, 25, &operations, &validations) ==
+          VC_PAUSE_STATUS_OK);
+}
+
 int main(void)
 {
     test_successful_pause_and_reverse_resume();
@@ -325,6 +419,7 @@ int main(void)
     test_watchdog_expiry_and_clock_rollback();
     test_validation_is_side_effect_free();
     test_state_thread_list_can_be_reused();
+    test_checked_callback_boundaries();
 
     if (failures != 0) {
         fprintf(stderr, "%d pause lifecycle test(s) failed\n", failures);

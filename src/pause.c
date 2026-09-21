@@ -34,13 +34,51 @@ static vc_pause_status vc_pause_validate_threads(const vc_thread_id *thread_ids,
     return VC_PAUSE_STATUS_OK;
 }
 
-vc_pause_status vc_pause_begin(vc_pause_state *state,
-                               uint64_t target_generation,
-                               uint64_t now_ms,
-                               uint64_t max_pause_ms,
-                               const vc_thread_id *thread_ids,
-                               size_t thread_count,
-                               const vc_pause_operations *operations)
+static bool vc_pause_validate_boundary(
+    const vc_pause_validations *validations,
+    vc_pause_boundary_validation validation)
+{
+    return validations == NULL || validation == NULL ||
+           validation(validations->context);
+}
+
+static bool vc_pause_resume_owned(
+    vc_pause_state *state,
+    size_t index,
+    const vc_pause_operations *operations,
+    const vc_pause_validations *validations,
+    bool *validation_failed)
+{
+    if (!vc_pause_validate_boundary(
+            validations,
+            validations == NULL ? NULL : validations->validate_resume)) {
+        *validation_failed = true;
+        return false;
+    }
+    if (operations->resume_thread(operations->context,
+                                  state->thread_ids[index]) != 0) {
+        state->failed_thread_id = state->thread_ids[index];
+        return false;
+    }
+    state->owned_mask &= ~(UINT64_C(1) << index);
+    if (!vc_pause_validate_boundary(
+            validations,
+            validations == NULL ? NULL : validations->validate_resume)) {
+        *validation_failed = true;
+        return false;
+    }
+    return true;
+}
+
+vc_pause_status vc_pause_begin_checked(
+    vc_pause_state *state,
+    uint64_t target_generation,
+    uint64_t now_ms,
+    uint64_t max_pause_ms,
+    const vc_thread_id *thread_ids,
+    size_t thread_count,
+    const vc_pause_operations *operations,
+    const vc_pause_validations *validations)
 {
     vc_thread_id validated_thread_ids[VC_PAUSE_MAX_THREADS];
     size_t index;
@@ -74,9 +112,13 @@ vc_pause_status vc_pause_begin(vc_pause_state *state,
     state->active = true;
 
     for (index = 0; index < thread_count; ++index) {
-        if (operations->suspend_thread(operations->context,
-                                       state->thread_ids[index]) != 0) {
+        if (!vc_pause_validate_boundary(
+                validations,
+                validations == NULL
+                    ? NULL
+                    : validations->validate_suspend)) {
             bool rollback_failed = false;
+            bool validation_failed = false;
 
             state->failed_thread_id = state->thread_ids[index];
             while (index != 0) {
@@ -84,12 +126,40 @@ vc_pause_status vc_pause_begin(vc_pause_state *state,
                 if ((state->owned_mask & (UINT64_C(1) << index)) == 0) {
                     continue;
                 }
-                if (operations->resume_thread(operations->context,
-                                              state->thread_ids[index]) == 0) {
-                    state->owned_mask &= ~(UINT64_C(1) << index);
-                } else {
-                    state->failed_thread_id = state->thread_ids[index];
+                if (!vc_pause_resume_owned(
+                        state, index, operations, validations,
+                        &validation_failed)) {
                     rollback_failed = true;
+                    if (validation_failed) {
+                        break;
+                    }
+                }
+            }
+            if (state->owned_mask == 0) {
+                vc_pause_clear(state);
+                return VC_PAUSE_STATUS_VALIDATION_FAILED;
+            }
+            return rollback_failed ? VC_PAUSE_STATUS_ROLLBACK_FAILED
+                                   : VC_PAUSE_STATUS_VALIDATION_FAILED;
+        }
+        if (operations->suspend_thread(operations->context,
+                                       state->thread_ids[index]) != 0) {
+            bool rollback_failed = false;
+            bool validation_failed = false;
+
+            state->failed_thread_id = state->thread_ids[index];
+            while (index != 0) {
+                --index;
+                if ((state->owned_mask & (UINT64_C(1) << index)) == 0) {
+                    continue;
+                }
+                if (!vc_pause_resume_owned(
+                        state, index, operations, validations,
+                        &validation_failed)) {
+                    rollback_failed = true;
+                    if (validation_failed) {
+                        break;
+                    }
                 }
             }
 
@@ -102,17 +172,66 @@ vc_pause_status vc_pause_begin(vc_pause_state *state,
         }
 
         state->owned_mask |= UINT64_C(1) << index;
+        if (!vc_pause_validate_boundary(
+                validations,
+                validations == NULL
+                    ? NULL
+                    : validations->validate_suspend)) {
+            bool rollback_failed = false;
+            bool validation_failed = false;
+            size_t rollback_index = index + 1u;
+
+            state->failed_thread_id = state->thread_ids[index];
+            while (rollback_index != 0) {
+                --rollback_index;
+                if ((state->owned_mask &
+                     (UINT64_C(1) << rollback_index)) == 0) {
+                    continue;
+                }
+                if (!vc_pause_resume_owned(
+                        state, rollback_index, operations, validations,
+                        &validation_failed)) {
+                    rollback_failed = true;
+                    if (validation_failed) {
+                        break;
+                    }
+                }
+            }
+            if (state->owned_mask == 0) {
+                vc_pause_clear(state);
+                return VC_PAUSE_STATUS_VALIDATION_FAILED;
+            }
+            return rollback_failed ? VC_PAUSE_STATUS_ROLLBACK_FAILED
+                                   : VC_PAUSE_STATUS_VALIDATION_FAILED;
+        }
     }
 
     state->failed_thread_id = 0;
     return VC_PAUSE_STATUS_OK;
 }
 
-vc_pause_status vc_pause_end(vc_pause_state *state,
-                             uint64_t target_generation,
-                             const vc_pause_operations *operations)
+vc_pause_status vc_pause_begin(vc_pause_state *state,
+                               uint64_t target_generation,
+                               uint64_t now_ms,
+                               uint64_t max_pause_ms,
+                               const vc_thread_id *thread_ids,
+                               size_t thread_count,
+                               const vc_pause_operations *operations)
+{
+    return vc_pause_begin_checked(
+        state, target_generation, now_ms, max_pause_ms,
+        thread_ids, thread_count, operations, NULL);
+}
+
+vc_pause_status vc_pause_end_checked(
+    vc_pause_state *state,
+    uint64_t target_generation,
+    const vc_pause_operations *operations,
+    const vc_pause_validations *validations)
 {
     size_t index;
+    bool validation_failed = false;
+    bool resume_failed = false;
 
     if (state == NULL || operations == NULL ||
         operations->resume_thread == NULL || target_generation == 0) {
@@ -132,20 +251,34 @@ vc_pause_status vc_pause_end(vc_pause_state *state,
         if ((state->owned_mask & (UINT64_C(1) << index)) == 0) {
             continue;
         }
-        if (operations->resume_thread(operations->context,
-                                      state->thread_ids[index]) == 0) {
-            state->owned_mask &= ~(UINT64_C(1) << index);
-        } else if (state->failed_thread_id == 0) {
-            state->failed_thread_id = state->thread_ids[index];
+        if (!vc_pause_resume_owned(
+                state, index, operations, validations,
+                &validation_failed)) {
+            if (validation_failed) {
+                break;
+            }
+            resume_failed = true;
         }
     }
 
     if (state->owned_mask != 0) {
-        return VC_PAUSE_STATUS_RESUME_FAILED;
+        return validation_failed ? VC_PAUSE_STATUS_VALIDATION_FAILED
+                                 : VC_PAUSE_STATUS_RESUME_FAILED;
     }
 
     vc_pause_clear(state);
-    return VC_PAUSE_STATUS_OK;
+    return validation_failed ? VC_PAUSE_STATUS_VALIDATION_FAILED
+                             : resume_failed
+                                   ? VC_PAUSE_STATUS_RESUME_FAILED
+                                   : VC_PAUSE_STATUS_OK;
+}
+
+vc_pause_status vc_pause_end(vc_pause_state *state,
+                             uint64_t target_generation,
+                             const vc_pause_operations *operations)
+{
+    return vc_pause_end_checked(
+        state, target_generation, operations, NULL);
 }
 
 vc_pause_status vc_pause_tick(vc_pause_state *state,

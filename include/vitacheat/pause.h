@@ -24,7 +24,8 @@ typedef enum vc_pause_status {
     VC_PAUSE_STATUS_STALE_TARGET = -5,
     VC_PAUSE_STATUS_SUSPEND_FAILED = -6,
     VC_PAUSE_STATUS_ROLLBACK_FAILED = -7,
-    VC_PAUSE_STATUS_RESUME_FAILED = -8
+    VC_PAUSE_STATUS_RESUME_FAILED = -8,
+    VC_PAUSE_STATUS_VALIDATION_FAILED = -9
 } vc_pause_status;
 
 /*
@@ -39,6 +40,14 @@ typedef struct vc_pause_operations {
     vc_pause_thread_operation resume_thread;
     void *context;
 } vc_pause_operations;
+
+typedef bool (*vc_pause_boundary_validation)(void *context);
+
+typedef struct vc_pause_validations {
+    vc_pause_boundary_validation validate_suspend;
+    vc_pause_boundary_validation validate_resume;
+    void *context;
+} vc_pause_validations;
 
 typedef struct vc_pause_state {
     uint64_t target_generation;
@@ -68,12 +77,38 @@ vc_pause_status vc_pause_begin(vc_pause_state *state,
                                const vc_pause_operations *operations);
 
 /*
+ * Checked begin validates immediately before and after every successful
+ * suspend callback. Rollback validates ownership before and after each resume.
+ * A failed validation retains every suspension that cannot be safely released.
+ */
+vc_pause_status vc_pause_begin_checked(
+    vc_pause_state *state,
+    uint64_t target_generation,
+    uint64_t now_ms,
+    uint64_t max_pause_ms,
+    const vc_thread_id *thread_ids,
+    size_t thread_count,
+    const vc_pause_operations *operations,
+    const vc_pause_validations *validations);
+
+/*
  * Resumes only suspensions owned by this transaction, in reverse order.
  * Failed resumes remain recorded so the same call can safely retry cleanup.
  */
 vc_pause_status vc_pause_end(vc_pause_state *state,
                              uint64_t target_generation,
                              const vc_pause_operations *operations);
+
+/*
+ * Checked end validates exact ownership before and after every resume callback.
+ * Validation failure stops further callbacks and leaves remaining ownership
+ * retryable.
+ */
+vc_pause_status vc_pause_end_checked(
+    vc_pause_state *state,
+    uint64_t target_generation,
+    const vc_pause_operations *operations,
+    const vc_pause_validations *validations);
 
 /*
  * Enforces the pause deadline. A watchdog execution path that is not itself

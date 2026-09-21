@@ -195,7 +195,8 @@ static void fuzz_check_invariants(
     fuzz_check(!(claimant->authorization_consumed &&
                  claimant->menu_open));
     if (claimant->authorization_available ||
-        claimant->authorization_consumed) {
+        claimant->authorization_consumed ||
+        claimant->menu_open) {
         fuzz_check(claimant->authorization_id != 0);
         fuzz_check(claimant->server_claimed);
     }

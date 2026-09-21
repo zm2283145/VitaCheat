@@ -128,6 +128,18 @@ typedef struct vc_launch_open_authorization {
 } vc_launch_open_authorization;
 
 /*
+ * A prospective owner may inspect this controller-local snapshot to validate
+ * all of its own prerequisites before consuming the one-shot authorization.
+ * Inspection does not reserve or consume authority; the later consumed token
+ * must still byte-match authorization.
+ */
+typedef struct vc_launch_open_authorization_snapshot {
+    vc_launch_claimant_observation observation;
+    vc_launch_open_authorization authorization;
+    uint64_t deadline_ms;
+} vc_launch_open_authorization_snapshot;
+
+/*
  * get_observation must atomically or coherently report authoritative injected
  * module identity, the matching foreground title, overlay state, and renderer
  * compatibility. Identity and title fields must come from trusted platform
@@ -255,9 +267,23 @@ vc_launch_claimant_result vc_launch_claimant_request_claim(
 vc_launch_claimant_result vc_launch_claimant_worker_step(
     vc_launch_claimant *claimant);
 
+vc_launch_claimant_result vc_launch_claimant_inspect_open_authorization(
+    vc_launch_claimant *claimant,
+    vc_launch_open_authorization_snapshot *snapshot);
+
 vc_launch_claimant_result vc_launch_claimant_consume_open_authorization(
     vc_launch_claimant *claimant,
     vc_launch_open_authorization *authorization);
+
+/*
+ * Coherently validates the exact consumed or acknowledged authorization
+ * lineage without invoking adapters. Only AUTHORIZATION_CONSUMED and OPEN are
+ * accepted as expected_status values.
+ */
+vc_launch_claimant_result vc_launch_claimant_validate_open_authorization(
+    vc_launch_claimant *claimant,
+    const vc_launch_open_authorization *authorization,
+    vc_launch_claimant_status expected_status);
 
 vc_launch_claimant_result vc_launch_claimant_acknowledge_open(
     vc_launch_claimant *claimant,

@@ -129,17 +129,52 @@ callbacks and has no native SceShell or kernel dependency.
   never rebuilt, and the unload adapter invokes the service plugin-unload
   lifecycle for the saved module identity. Failure is explicit but cannot keep
   the controller running or preserve a token.
+- The menu coordinator accepts only that exact unconsumed authorization. It
+  completes all local allowlist, duration, identity, readiness, and ownership
+  checks before consuming the token once immediately before pause acquisition;
+  a consumed token is never replaced or replayed after failure.
+- The allowlist is caller-supplied, copied, strictly increasing, nonempty, and
+  bounded by `VC_PAUSE_MAX_THREADS`. It carries a nonzero trusted source
+  revision and must match the exact claimant PID, process generation, and
+  module-load generation.
+- Plugin control, input hook, renderer/present hook, watchdog, cleanup, and
+  current calling thread IDs are explicit positive protected inputs. Any
+  protected occurrence, zero/negative ID, duplicate, disorder, unknown
+  ownership, revision change, or over-limit count fails before suspension.
+- Suspend and resume callbacks are bracketed by trusted target/readiness or
+  ownership checks without holding the coordinator transaction gate. Consumed
+  and open claimant states must still byte-match the exact authorization
+  lineage after external callbacks; resume ownership checks contain only
+  threads that remain suspended. Reentrant mutations return `BUSY`; stale
+  completion cannot acknowledge or reopen a menu.
+- Full suspension creates only a provisional opaque lease. Renderer/menu
+  acknowledgement consumes and rotates it before `OPEN`; close consumes the
+  final lease. Target identity, claimant lineage, exact copied allowlist,
+  revision, pause generation, coordinator lifecycle, and fixed deadlines
+  remain bound internally and are never formatted.
+- The acknowledgement deadline is at most one second and the menu lease is no
+  longer than the existing ten-minute pause maximum. Zero, over-limit, and
+  overflowing intervals are rejected rather than clamped, and no operation
+  silently extends either deadline.
+- Close, timeout, clock rollback, target/foreground loss, overlay reopen,
+  presentation loss, claimant reset, exact target exit, unload, and stop revoke
+  menu authority before reverse resume. Failed resumes remain explicitly owned
+  and block new opens; exact target exit is the only notification that may
+  abandon ownership without resume. Stop remains stopped while cleanup is
+  retryable.
 
-The portable broker/ABI, launch-only service policy, add-on controller, and
-game claimant/open-authorization lifecycle are implemented. Native
-QuickMenuReborn widgets remain blocked because the pinned public API has no
-runtime version query, and native service transport remains blocked because
-QuickMenuReborn documents no kernel bridge. Public taiHEN lifecycle/hook APIs
-do not by themselves provide the required authoritative foreground, system
-overlay, and universal presentation facts. SceShell hooks, Vita service
+The portable broker/ABI, launch-only service policy, add-on controller, game
+claimant/open-authorization lifecycle, and authorization-to-pause/menu-lease
+coordinator are implemented. Native QuickMenuReborn widgets remain blocked
+because the pinned public API has no runtime version query, and native service
+transport remains blocked because QuickMenuReborn documents no kernel bridge.
+Public taiHEN lifecycle/hook APIs do not by themselves provide the required
+authoritative foreground, system overlay, universal presentation, and
+title-specific gameplay-thread facts. SceShell hooks, Vita service
 syscalls/exports, concrete caller identity derivation, native injection,
-renderer/menu hooks, pause integration, bounded memory access, and cleanup
-hardware gates remain unavailable; no firmware-offset fallback is permitted.
+renderer/input/menu hooks, allowlist acquisition, bounded memory access, and
+cleanup hardware gates remain unavailable; no firmware-offset fallback is
+permitted.
 
 ## Menu pause rules
 

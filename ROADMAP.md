@@ -26,6 +26,9 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
 - [x] Allocation-free injected-game launch claimant with trusted identity,
       stable overlay-close and presentation gates, exact status/claim/cancel
       transport, and one-time expiring local open authorization.
+- [x] Allocation-free menu/pause coordinator with exact claimant handoff,
+      explicit protected-thread exclusion, bounded leases, readiness
+      acknowledgement, watchdog expiry, and retryable reverse cleanup.
 - [x] Add sanitizer, fuzz, and property-based CI coverage.
 - [ ] Add snapshot/session file formats with strict version and size limits.
 
@@ -88,12 +91,12 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
 - [x] Host-test the matching injected game-plugin claimant after a stable
       system-overlay close and exact presentation compatibility check, emitting
       one local open authorization without rendering or pausing.
-- [ ] Implement the native injected game plugin and renderer/menu owner that
-      consumes the portable claimant's authorization.
+- [ ] Implement the native injected game plugin and renderer/menu owner around
+      the portable authorization-to-pause coordinator.
 - [ ] In the kernel adapter, build an explicit gameplay-thread allowlist that
       excludes the injected menu, input, renderer, watchdog, and cleanup paths.
-- [ ] Couple menu open/close to transactional pause/resume and refuse to open
-      when suspension or rollback is incomplete.
+- [x] Host-test coupling menu open/close to transactional pause/resume and
+      refuse to open when suspension or rollback is incomplete.
 - [ ] Prove supported display hooks per rendering path before claiming
       cross-title overlay compatibility.
 - [ ] Preserve progress within fixed memory and time budgets.
@@ -162,6 +165,9 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
 - [x] Implement the portable game-side claimant/controller and host-test
       attested discovery, stable overlay/presentation gating, one-shot
       authorization, stale completion rejection, and stop/unload cleanup.
+- [x] Implement the portable menu owner that consumes one claimant
+      authorization, validates a caller-supplied allowlist and protected set,
+      owns pause/resume, and enforces a finite nonextending menu lease.
 - [ ] Resolve the missing public QuickMenuReborn runtime-version probe and
       implement an attested SceShell-to-kernel transport before adding the
       optional native `.suprx` target.
@@ -169,6 +175,9 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
       foreground/overlay observation, and per-renderer readiness adapters
       before adding a claimant `.suprx`; public taiHEN lifecycle/hook APIs alone
       do not provide those complete end-to-end facts.
+- [ ] Define and verify a title-specific native gameplay-thread allowlist
+      acquisition policy and attested suspend/resume transport without
+      hard-coded IDs, name/priority heuristics, or scheduler starvation.
 - [ ] Keep parsing, rendering, protocol handling, and database logic out of
       kernel context.
 - [ ] Validate process-generation binding, unload, title exit, suspend/resume,

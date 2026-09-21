@@ -35,7 +35,10 @@ The portable core also owns authority-free helpers:
   public status, and transactional UI-resource cleanup; and
 - an injected-game claimant/controller that owns coherent trusted identity,
   overlay, and presentation observations, exact status/claim/cancel transport,
-  and a one-time local menu-open authorization.
+  and a one-time local menu-open authorization; and
+- a menu/pause coordinator that validates an explicit protected-thread
+  allowlist, consumes one exact claimant authorization, owns the pause
+  transaction, and issues one bounded local menu lease.
 
 None of these helpers reads controller hardware, enumerates or suspends threads,
 opens files, renders UI, or writes memory. Those responsibilities remain in
@@ -226,6 +229,55 @@ during stop. Plugin unload additionally invokes an idempotent adapter that must
 map the exact saved module identity to the launch-service plugin-unload
 lifecycle. Cleanup failure is explicit while the controller remains stopped.
 
+### Portable menu/pause coordinator
+
+`include/vitacheat/menu_coordinator.h` composes the claimant and pause
+transactions without duplicating either state machine. The caller binds one
+normalized game-plugin PID, process generation, module-load generation, title,
+and foreground identity, then supplies a copied, strictly increasing allowlist
+of at most `VC_PAUSE_MAX_THREADS` positive gameplay-thread IDs. Six explicit
+protected roles—plugin control, input hook, renderer/present hook, watchdog,
+cleanup, and the current calling thread—are mandatory and may not occur
+anywhere in that allowlist.
+
+Before consuming authority, the coordinator inspects the claimant's still-
+unconsumed `OPEN_AUTHORIZED` lineage, byte-matches its complete identity,
+overlay, and presentation snapshot, checks the caller's nonzero allowlist
+revision, and asks one trusted adapter to verify ownership of the exact copied
+thread set. It revalidates the same observation after every callback boundary.
+Only then does it consume the claimant token immediately before
+`vc_pause_begin_checked` acquisition. Deterministic suspension order and
+reverse rollback remain owned by the pause primitive. After consumption, a
+coherent claimant query also byte-matches the exact authorization lineage and
+expected consumed/open state after each external callback and before either
+lease is minted.
+
+Successful suspension yields a controller-local provisional lease. A separate
+owner acknowledgement revalidates the exact target and claimant token, rotates
+the provisional value so it cannot be replayed, and only then marks the menu
+open. The final lease is bound internally to target and module identity,
+claimant lineage, exact copied allowlist and revision, pause generation,
+coordinator lifecycle, and fixed monotonic acknowledgement/menu deadlines.
+Neither acknowledgement nor tick extends either deadline.
+
+Close, expiry, clock rollback, foreground/target change, overlay reopen,
+presentation loss, claimant reset, target exit, plugin unload, service stop,
+and coordinator stop revoke the local lease before claimant cleanup and
+reverse resume. Resume callbacks are bracketed by trusted ownership checks for
+only the threads still owned by that pause transaction; already-resumed or
+never-suspended IDs are never revalidated as owned. Failures retain only
+still-owned suspensions for explicit bounded retry; new opens remain blocked.
+An exact target-exit event may abandon ownership without calling recycled
+thread IDs. Stop stays stopped even while cleanup is pending. Public state and
+formatter output reveal no PID, title, generation, thread, authorization,
+lease, kernel, or memory identity.
+
+This component has no thread enumeration policy or native authority. A future
+adapter must provide the exact title-specific allowlist, protected IDs,
+coherent identity/readiness observations, ownership verification, and
+attested suspend/resume transport. It does not draw a menu, read input, access
+memory, restore patches, or execute search/write/freeze operations.
+
 The portable target contract is C11 plus an integer pointer type (`uintptr_t`)
 wide enough to represent object ranges. That holds for the supported Windows
 host and ARM Vita targets and lets the parser reject overlapping source and
@@ -261,11 +313,12 @@ read, pause, write, or freeze capability. Duplicate requests are idempotent;
 foreground-title changes and expiry discard them.
 
 The portable broker, v1 ABI, caller-attesting service policy, add-on-side
-controller, and injected-game claimant/open-authorization state machine
-implementing these rules are present. The QuickMenuReborn widget adapter,
-SceShell transport, Vita caller/foreground/overlay adapter, kernel export,
-native game-plugin injection, display hooks, and menu renderer described below
-are not.
+controller, injected-game claimant/open-authorization state machine, and
+authorization-to-pause/menu-lease coordinator implementing these rules are
+present. The QuickMenuReborn widget adapter, SceShell transport, Vita
+caller/foreground/overlay adapter, verified thread-allowlist source, kernel
+export, native game-plugin injection, display/input hooks, and menu renderer
+described below are not.
 
 The QuickMenuReborn public widget API is preferred over direct SceShell offset
 patching. Clean-room research pins the MIT API to

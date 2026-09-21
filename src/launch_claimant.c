@@ -1551,6 +1551,93 @@ vc_launch_claimant_result vc_launch_claimant_consume_open_authorization(
     return result;
 }
 
+vc_launch_claimant_result vc_launch_claimant_inspect_open_authorization(
+    vc_launch_claimant *claimant,
+    vc_launch_open_authorization_snapshot *snapshot)
+{
+    vc_launch_claimant_result result;
+
+    if (snapshot == NULL) {
+        return VC_LAUNCH_CLAIMANT_RESULT_INVALID_ARGUMENT;
+    }
+    memset(snapshot, 0, sizeof(*snapshot));
+    result = vc_claimant_enter(claimant);
+    if (result != VC_LAUNCH_CLAIMANT_RESULT_OK) {
+        return result;
+    }
+    if (claimant->phase != VC_LAUNCH_CLAIMANT_PHASE_RUNNING) {
+        vc_claimant_leave(claimant);
+        return VC_LAUNCH_CLAIMANT_RESULT_NOT_RUNNING;
+    }
+    if (!claimant->authorization_available ||
+        claimant->authorization_consumed ||
+        claimant->authorization_id == 0) {
+        vc_claimant_leave(claimant);
+        return VC_LAUNCH_CLAIMANT_RESULT_NO_AUTHORIZATION;
+    }
+    result = vc_claimant_verify_authorization(claimant);
+    if (result == VC_LAUNCH_CLAIMANT_RESULT_OK) {
+        snapshot->observation =
+            claimant->authorization_observation;
+        snapshot->authorization.value =
+            claimant->authorization_id;
+        snapshot->authorization.lifecycle_generation =
+            claimant->lifecycle_generation;
+        snapshot->deadline_ms =
+            claimant->authorization_deadline_ms;
+    }
+    vc_claimant_leave(claimant);
+    return result;
+}
+
+vc_launch_claimant_result vc_launch_claimant_validate_open_authorization(
+    vc_launch_claimant *claimant,
+    const vc_launch_open_authorization *authorization,
+    vc_launch_claimant_status expected_status)
+{
+    vc_launch_claimant_result result;
+    bool valid;
+
+    if (authorization == NULL ||
+        (expected_status !=
+             VC_LAUNCH_CLAIMANT_STATUS_AUTHORIZATION_CONSUMED &&
+         expected_status != VC_LAUNCH_CLAIMANT_STATUS_OPEN)) {
+        return VC_LAUNCH_CLAIMANT_RESULT_INVALID_ARGUMENT;
+    }
+    result = vc_claimant_enter(claimant);
+    if (result != VC_LAUNCH_CLAIMANT_RESULT_OK) {
+        return result;
+    }
+    if (claimant->phase != VC_LAUNCH_CLAIMANT_PHASE_RUNNING) {
+        vc_claimant_leave(claimant);
+        return VC_LAUNCH_CLAIMANT_RESULT_NOT_RUNNING;
+    }
+
+    valid =
+        authorization->value != 0 &&
+        authorization->value == claimant->authorization_id &&
+        authorization->lifecycle_generation != 0 &&
+        authorization->lifecycle_generation ==
+            claimant->lifecycle_generation &&
+        vc_launch_claimant_get_status(claimant) == expected_status;
+    if (expected_status ==
+        VC_LAUNCH_CLAIMANT_STATUS_AUTHORIZATION_CONSUMED) {
+        valid = valid &&
+                claimant->authorization_consumed &&
+                !claimant->authorization_available &&
+                !claimant->menu_open;
+    } else {
+        valid = valid &&
+                claimant->menu_open &&
+                !claimant->authorization_available &&
+                !claimant->authorization_consumed;
+    }
+    vc_claimant_leave(claimant);
+    return valid
+               ? VC_LAUNCH_CLAIMANT_RESULT_OK
+               : VC_LAUNCH_CLAIMANT_RESULT_NO_AUTHORIZATION;
+}
+
 vc_launch_claimant_result vc_launch_claimant_acknowledge_open(
     vc_launch_claimant *claimant,
     const vc_launch_open_authorization *authorization)
@@ -1579,7 +1666,6 @@ vc_launch_claimant_result vc_launch_claimant_acknowledge_open(
     result = vc_claimant_verify_authorization(claimant);
     if (result == VC_LAUNCH_CLAIMANT_RESULT_OK) {
         claimant->authorization_consumed = false;
-        claimant->authorization_id = 0;
         claimant->authorization_deadline_ms = 0;
         memset(&claimant->authorization_observation, 0,
                sizeof(claimant->authorization_observation));

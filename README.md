@@ -8,15 +8,15 @@ online community database.
 This repository is an early scaffold. The current code is a portable,
 allocation-free memory snapshot search/refinement core, a lossless legacy
 VitaCheat `.psv` importer, and a deterministic menu-activation state machine,
-plus a transactional gameplay-thread pause coordinator and a versioned,
-allocation-free Quick Menu launch-request broker, plus a caller-attesting,
-copy-bounded portable launch service front door and a host-testable,
-allocation-free Quick Menu launcher controller, all with host tests. A separate
-ordinary user-mode Vita self-test now exercises the scanner and
-five-second Select menu against memory owned by that test app. It is not a
-plugin and does not attach to a process, suspend another application's threads,
-read or write another application's memory, freeze values, connect over a
-network, or download cheats.
+plus transactional gameplay-thread pause ownership, a versioned,
+allocation-free Quick Menu launch-request broker, a caller-attesting,
+copy-bounded portable launch service front door, a host-testable Quick Menu
+launcher and game claimant, and a portable authorization-to-pause menu
+coordinator, all with host tests. A separate ordinary user-mode Vita self-test
+now exercises the scanner and five-second Select menu against memory owned by
+that test app. It is not a plugin and does not attach to a process, suspend
+another application's threads, read or write another application's memory,
+freeze values, connect over a network, or download cheats.
 
 ## Why this project exists
 
@@ -112,14 +112,24 @@ The same portable milestone now also:
 - converts one successful claim into a short-lived local menu-open
   authorization that can be consumed and acknowledged once, and revokes it on
   observation change, expiry, rollback, reset, stop, or unload; and
-- keeps claim success separate from menu open: this layer does not render,
-  pause threads, hook presentation, or grant memory access.
+- consumes that authorization only after validating an explicit sorted,
+  generation-bound gameplay-thread allowlist and explicit protected control,
+  input, presentation, watchdog, cleanup, and calling-thread identities;
+- acquires the existing pause transaction with exact observation checks around
+  every suspend boundary, exposes a finite opaque provisional/open lease, and
+  acknowledges claimant open only after renderer/menu readiness is confirmed;
+- revokes local menu authority before reverse resume on close, timeout, clock
+  rollback, foreground/overlay/presentation change, reset, unload, or stop,
+  retaining failed resume ownership for bounded retry; and
+- keeps menu lifecycle separate from rendering, input, discovery, patch
+  rollback, memory access, write, search, freeze, and hardware operations.
 
-The pause coordinator, launch broker, launch service, launcher controller, and
-game claimant have no platform authority by themselves; process identity,
-foreground, overlay, presentation, copy/transport, UI, worker, clock, and
-cleanup operations are injected by future native adapters. No imported
-operation is executed in this milestone.
+The pause transaction, menu coordinator, launch broker, launch service,
+launcher controller, and game claimant have no platform authority by
+themselves; process identity, foreground, overlay, presentation, thread
+ownership/control, copy/transport, UI, worker, clock, and cleanup operations are
+injected by future native adapters. No imported operation is executed in this
+milestone.
 See
 [docs/legacy-psv-compatibility.md](docs/legacy-psv-compatibility.md).
 
@@ -181,10 +191,11 @@ The existing five-second Select state machine remains a tested self-test and
 recovery component, but is no longer the planned production launcher. A generic
 cross-title overlay is still unproven and will not be claimed until renderer
 hooks and cleanup pass hardware gates. The portable broker, byte ABI, service boundary, add-on-side controller, and
-injected-game claimant/open-authorization lifecycle are implemented. A native
+injected-game claimant/open-authorization lifecycle, and portable
+authorization-to-pause/menu-lease coordinator are implemented. A native
 QuickMenuReborn module, verified kernel/user transport and injection adapters,
-renderer/menu implementation, pause integration, bounded memory service, and
-hardware cleanup gates are not.
+title-specific allowlist acquisition policy, renderer/input/menu
+implementation, bounded memory service, and hardware cleanup gates are not.
 
 The online database will supply bounded declarative records, never executable
 scripts. The kernel service must expose a narrow versioned ABI and pass a
@@ -227,11 +238,13 @@ For bounded libFuzzer coverage, add `-DVITACHEAT_BUILD_FUZZERS=ON` and run
 `build-sanitize/vitacheat_launch_service_fuzzer -runs=10000 -max_len=512` and
 `build-sanitize/vitacheat_quick_menu_launcher_fuzzer -runs=10000 -max_len=512`
 and
-`build-sanitize/vitacheat_launch_claimant_fuzzer -runs=10000 -max_len=512`.
+`build-sanitize/vitacheat_launch_claimant_fuzzer -runs=10000 -max_len=512` and
+`build-sanitize/vitacheat_menu_coordinator_fuzzer -runs=10000 -max_len=512`.
 Dependency-free deterministic smoke targets are also available as
 `make launch-service-fuzz-smoke` and
 `make quick-menu-launcher-fuzz-smoke` and
-`make launch-claimant-fuzz-smoke`.
+`make launch-claimant-fuzz-smoke` and
+`make menu-coordinator-fuzz-smoke`.
 
 VitaSDK is not required to build and run the host tests. Building the Vita
 self-test VPK does require VitaSDK.
@@ -298,6 +311,8 @@ listed only after their own gates pass.
   UI/worker/transport adapter contract, and bounded public status model.
 - `include/vitacheat/launch_claimant.h` — allocation-free injected-game
   identity/overlay/presentation claimant and one-shot open authorization.
+- `include/vitacheat/menu_coordinator.h` — exact authorization handoff,
+  protected-thread allowlist, pause ownership, and bounded menu lease.
 - `src/search.c` — portable little-endian implementation.
 - `src/legacy_psv.c` — syntax indexing and conservative operation mapping.
 - `src/menu_activation.c` — five-second one-shot activation logic.
@@ -309,6 +324,8 @@ listed only after their own gates pass.
   callback handoff, exact submit/status dispatch, and snapshot revalidation.
 - `src/launch_claimant.c` — trusted observation gates, discovery/claim/cancel
   worker, one-time authorization, and unload/stop cleanup.
+- `src/menu_coordinator.c` — authorization-to-pause transaction, lease,
+  watchdog, lifecycle revalidation, and retryable reverse cleanup.
 - `tests/host/test_search.c` — native behavioral and boundary tests.
 - `tests/host/test_legacy_psv.c` — mixed-format, truncation, and fail-closed
   importer tests.
@@ -323,6 +340,8 @@ listed only after their own gates pass.
   tests.
 - `tests/host/test_launch_claimant.c` — overlay/presentation ordering, identity
   churn, exact transport, authorization, cleanup, and bounded state tests.
+- `tests/host/test_menu_coordinator.c` — allowlist, authorization, pause,
+  lease, lifecycle, reentrancy, expiry, and cleanup tests.
 - `tests/fuzz/fuzz_launch_broker.c` — bounded codec/dispatch/lifecycle fuzzer.
 - `tests/fuzz/fuzz_launch_service.c` — bounded untrusted-byte, metadata, copy,
   and service-lifecycle fuzzer.
@@ -330,6 +349,8 @@ listed only after their own gates pass.
   foreground, response, and adapter-failure fuzzer.
 - `tests/fuzz/fuzz_launch_claimant.c` — bounded claimant lifecycle,
   observation, transport, authorization, and time fuzzer.
+- `tests/fuzz/fuzz_menu_coordinator.c` — bounded coordinator allowlist,
+  authorization, callback, lease, lifecycle, and cleanup fuzzer.
 - `vita-self-test/` — ordinary user-mode on-device menu and owned-buffer probe.
 - `docs/architecture.md` — component boundaries and data flow.
 - `docs/legacy-psv-compatibility.md` — compatibility guarantees and limits.

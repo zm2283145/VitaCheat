@@ -451,6 +451,7 @@ static void test_happy_path_and_gates(void)
     };
     vc_launch_claimant claimant = VC_LAUNCH_CLAIMANT_INITIALIZER;
     vc_launch_open_authorization authorization;
+    vc_launch_open_authorization_snapshot authorization_snapshot;
     fake_platform platform;
     vc_launch_request request;
 
@@ -511,19 +512,57 @@ static void test_happy_path_and_gates(void)
     CHECK(vc_launch_claimant_get_status(&claimant) ==
           VC_LAUNCH_CLAIMANT_STATUS_OPEN_AUTHORIZED);
 
+    CHECK(vc_launch_claimant_inspect_open_authorization(
+              &claimant, &authorization_snapshot) ==
+          VC_LAUNCH_CLAIMANT_RESULT_OK);
+    CHECK(authorization_snapshot.authorization.value != 0);
+    CHECK(authorization_snapshot.authorization.lifecycle_generation ==
+          claimant.lifecycle_generation);
+    CHECK(authorization_snapshot.observation.identity.caller.process_id ==
+          TARGET_PID);
+    CHECK(vc_launch_claimant_get_status(&claimant) ==
+          VC_LAUNCH_CLAIMANT_STATUS_OPEN_AUTHORIZED);
+
     CHECK(vc_launch_claimant_consume_open_authorization(
               &claimant, &authorization) ==
           VC_LAUNCH_CLAIMANT_RESULT_OK);
+    CHECK(authorization.value ==
+          authorization_snapshot.authorization.value);
     CHECK(authorization.value != 0);
     CHECK(authorization.value != REQUEST_ID);
     CHECK(vc_launch_claimant_consume_open_authorization(
               &claimant, &authorization) ==
+          VC_LAUNCH_CLAIMANT_RESULT_NO_AUTHORIZATION);
+    CHECK(vc_launch_claimant_inspect_open_authorization(
+              &claimant, &authorization_snapshot) ==
+          VC_LAUNCH_CLAIMANT_RESULT_NO_AUTHORIZATION);
+    CHECK(vc_launch_claimant_validate_open_authorization(
+              &claimant, &authorization,
+              VC_LAUNCH_CLAIMANT_STATUS_AUTHORIZATION_CONSUMED) ==
+          VC_LAUNCH_CLAIMANT_RESULT_OK);
+    CHECK(vc_launch_claimant_validate_open_authorization(
+              &claimant, &authorization,
+              VC_LAUNCH_CLAIMANT_STATUS_OPEN) ==
+          VC_LAUNCH_CLAIMANT_RESULT_NO_AUTHORIZATION);
+    ++authorization_snapshot.authorization.value;
+    CHECK(vc_launch_claimant_validate_open_authorization(
+              &claimant,
+              &authorization_snapshot.authorization,
+              VC_LAUNCH_CLAIMANT_STATUS_AUTHORIZATION_CONSUMED) ==
           VC_LAUNCH_CLAIMANT_RESULT_NO_AUTHORIZATION);
     CHECK(vc_launch_claimant_acknowledge_open(
               &claimant, &authorization) ==
           VC_LAUNCH_CLAIMANT_RESULT_OK);
     CHECK(vc_launch_claimant_get_status(&claimant) ==
           VC_LAUNCH_CLAIMANT_STATUS_OPEN);
+    CHECK(vc_launch_claimant_validate_open_authorization(
+              &claimant, &authorization,
+              VC_LAUNCH_CLAIMANT_STATUS_OPEN) ==
+          VC_LAUNCH_CLAIMANT_RESULT_OK);
+    CHECK(vc_launch_claimant_validate_open_authorization(
+              &claimant, &authorization,
+              VC_LAUNCH_CLAIMANT_STATUS_AUTHORIZATION_CONSUMED) ==
+          VC_LAUNCH_CLAIMANT_RESULT_NO_AUTHORIZATION);
     CHECK(vc_launch_claimant_acknowledge_open(
               &claimant, &authorization) ==
           VC_LAUNCH_CLAIMANT_RESULT_NO_AUTHORIZATION);

@@ -21,6 +21,17 @@ jobs:
       - name: Test GCC build
         run: ctest --test-dir build-gcc --output-on-failure
 
+  windows-msvc:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure MSVC C11 build
+        run: cmake -S . -B build-msvc -A x64 -DCMAKE_BUILD_TYPE=Debug
+      - name: Build with MSVC /W4 /WX
+        run: cmake --build build-msvc --config Debug --parallel
+      - name: Test MSVC build
+        run: ctest --test-dir build-msvc -C Debug --output-on-failure
+
   sanitizer-and-fuzz:
     runs-on: ubuntu-latest
     steps:
@@ -46,3 +57,5 @@ jobs:
         run: ./build-sanitize/vitacheat_quick_menu_launcher_fuzzer -runs=10000 -max_len=512
       - name: Run bounded game launch claimant fuzzer
         run: ./build-sanitize/vitacheat_launch_claimant_fuzzer -runs=10000 -max_len=512
+      - name: Run bounded menu coordinator fuzzer
+        run: ./build-sanitize/vitacheat_menu_coordinator_fuzzer -runs=10000 -max_len=512
