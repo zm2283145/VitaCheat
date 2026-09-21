@@ -8,10 +8,12 @@ online community database.
 This repository is an early scaffold. The current code is a portable,
 allocation-free memory snapshot search/refinement core, a lossless legacy
 VitaCheat `.psv` importer, and a deterministic menu-activation state machine,
-all with host tests. A separate ordinary user-mode Vita self-test now exercises
-the scanner and five-second Select menu against memory owned by that test app.
-It is not a plugin and does not attach to a process, read or write another
-application's memory, freeze values, connect over a network, or download cheats.
+plus a transactional gameplay-thread pause coordinator, all with host tests. A
+separate ordinary user-mode Vita self-test now exercises the scanner and
+five-second Select menu against memory owned by that test app. It is not a
+plugin and does not attach to a process, suspend another application's threads,
+read or write another application's memory, freeze values, connect over a
+network, or download cheats.
 
 ## Why this project exists
 
@@ -50,15 +52,25 @@ The same portable milestone now also:
   retaining byte-exact source spans, including original line endings;
 - recognizes only the documented `$0000`, `$0100`, and `$0200` direct-write
   forms as typed 8/16/32-bit operations;
+- recognizes a strictly bounded `$B200` module/segment selector only when it is
+  the first operation in a cheat and scopes following typed writes as relative;
+- marks duplicate, late, out-of-range, or dangling `$B200` sequences malformed;
 - preserves every other syntactically valid code as opaque data instead of
   guessing its meaning;
 - reports malformed records, truncation, and legacy format-limit violations;
 - exposes parsed records only when all output buffers fit, preventing dangling
   cross-indexes in a truncated import;
 - emits one menu-open event after Select remains held for five seconds, then
-  waits for a release before it can fire again.
+  waits for a release before it can fire again;
+- coordinates a bounded, generation-bound pause transaction for an adapter-
+  supplied allowlist of gameplay threads;
+- rolls back partial suspension in reverse order and retains only failed cleanup
+  ownership for an explicit retry;
+- rejects stale process generations and forces cleanup after a bounded menu
+  deadline or monotonic-clock rollback.
 
-No imported operation is executed in this milestone. See
+The pause coordinator has no thread authority by itself; no imported operation
+is executed in this milestone. See
 [docs/legacy-psv-compatibility.md](docs/legacy-psv-compatibility.md).
 
 The first Vita-facing build is the deliberately unprivileged and now
@@ -87,28 +99,34 @@ contains exact artifact hashes and the retained result screenshot.
 
 ## Architecture direction
 
-The planned device design is hybrid. Most logic stays in user mode, while a
-small capability-limited kernel companion supplies only the cross-process
-operations that cannot be implemented safely from the Vita application. The
-search engine remains separate from both layers:
+The selected device design is hybrid. A capability-limited kernel service owns
+only target lifecycle, cooperative thread-pause operations, and bounded
+cross-process memory access. An injected user-mode plugin owns controller
+polling, display hooks, menu rendering, search state, and user approval:
 
 ```text
-on-device UI                       optional PC companion
-      |                                      |
-      +------- paired, bounded protocol -----+
-                         |
-             capability-checked Vita adapter
-                         |
-             narrow kernel companion
-                         |
-                portable vitacheat_core
+injected user menu                     optional PC companion
+        |                                        |
+        +--------- bounded request ABI ----------+
+                             |
+              capability-checked kernel service
+                             |
+      target generation + pause/write ownership
+                             |
+                  portable vitacheat_core
 ```
 
+The menu will retain the tested five-second Select hold. Opening it may suspend
+only an explicit allowlist of gameplay threads; the hook, input, rendering,
+watchdog, and cleanup paths must remain runnable. A generic cross-title overlay
+is still an unproven compatibility target and will not be claimed until
+renderer hooks and cleanup pass hardware gates.
+
 The online database will supply bounded declarative records, never executable
-scripts. The kernel companion must expose a narrow versioned interface and pass
-a separate review and hardware gate for every capability. Eventual PSP/PS1
-work inside the Vita's PSP emulator is a distinct research track and may also
-need an emulator-side component; a Vita kernel plugin alone is not assumed to
+scripts. The kernel service must expose a narrow versioned ABI and pass a
+separate review and hardware gate for every capability. Eventual PSP/PS1 work
+inside the Vita's PSP emulator is a distinct research track and may also need
+an emulator-side component; a Vita kernel service alone is not assumed to
 provide complete or stable PSP memory semantics. See
 [docs/architecture.md](docs/architecture.md) and
 [docs/security-model.md](docs/security-model.md).
@@ -129,6 +147,20 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
+The CMake build can also run the complete host suite under AddressSanitizer and
+UndefinedBehaviorSanitizer:
+
+```sh
+CC=clang cmake -S . -B build-sanitize \
+  -DVITACHEAT_ENABLE_SANITIZERS=ON
+cmake --build build-sanitize
+ctest --test-dir build-sanitize --output-on-failure
+```
+
+For bounded libFuzzer coverage of arbitrary search inputs and refinement
+sequences, add `-DVITACHEAT_BUILD_FUZZERS=ON` and run
+`build-sanitize/vitacheat_search_fuzzer -runs=10000 -max_len=520`.
+
 VitaSDK is not required to build and run the host tests. Building the Vita
 self-test VPK does require VitaSDK.
 
@@ -140,6 +172,20 @@ module-relative addressing, build-identity checks, bounded messages, explicit
 ownership, watchdog cleanup, logging, profiling, and deployment workflows. It
 will not begin as a hard copy of the debugger or as a general arbitrary-kernel-
 access service.
+
+## Legacy implementation references
+
+Static clean-room research confirmed that original VitaCheat z06 shipped both a
+kernel `vitacheat.skprx` and an injected user `vitacheat.suprx`; the user module
+handled input, display hooking, and menu behavior. The earlier rinCheat was a
+user plugin and used hard-coded thread IDs plus scheduler starvation to appear
+paused. VitaCheat instead blocked a display call while its menu was open; that
+did not suspend every gameplay worker.
+
+Those projects are behavioral references only. rinCheat is GPLv3, while the
+VitaCheat binary archive has no detected source license. This repository does
+not copy their implementations, assets, fonts, or binaries. See the
+[architecture notes](docs/architecture.md#legacy-plugin-findings).
 
 ## Compatibility
 
@@ -153,13 +199,16 @@ listed only after their own gates pass.
 - `include/vitacheat/search.h` — public bounded search/refinement API.
 - `include/vitacheat/legacy_psv.h` — bounded lossless legacy importer API.
 - `include/vitacheat/menu_activation.h` — portable Select-hold state machine.
+- `include/vitacheat/pause.h` — bounded pause ownership and cleanup contract.
 - `src/search.c` — portable little-endian implementation.
 - `src/legacy_psv.c` — syntax indexing and conservative operation mapping.
 - `src/menu_activation.c` — five-second one-shot activation logic.
+- `src/pause.c` — transactional suspend, rollback, resume, and expiry logic.
 - `tests/host/test_search.c` — native behavioral and boundary tests.
 - `tests/host/test_legacy_psv.c` — mixed-format, truncation, and fail-closed
   importer tests.
 - `tests/host/test_menu_activation.c` — hold, release, and clock-reset tests.
+- `tests/host/test_pause.c` — pause ownership, rollback, retry, and expiry tests.
 - `vita-self-test/` — ordinary user-mode on-device menu and owned-buffer probe.
 - `docs/architecture.md` — component boundaries and data flow.
 - `docs/legacy-psv-compatibility.md` — compatibility guarantees and limits.

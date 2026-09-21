@@ -12,3 +12,20 @@ jobs:
       - name: Build and test
         run: make test
 
+  sanitizer-and-fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure Clang sanitizers and fuzzing
+        run: >-
+          cmake -S . -B build-sanitize
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DCMAKE_C_COMPILER=clang
+          -DVITACHEAT_ENABLE_SANITIZERS=ON
+          -DVITACHEAT_BUILD_FUZZERS=ON
+      - name: Build
+        run: cmake --build build-sanitize --parallel
+      - name: Run sanitizer tests
+        run: ctest --test-dir build-sanitize --output-on-failure
+      - name: Run bounded search fuzzer
+        run: ./build-sanitize/vitacheat_search_fuzzer -runs=10000 -max_len=520

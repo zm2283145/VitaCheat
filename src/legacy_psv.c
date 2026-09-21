@@ -89,6 +89,8 @@ static vc_psv_operation_kind operation_kind(uint16_t code)
         return VC_PSV_OPERATION_WRITE_U16;
     case UINT16_C(0x0200):
         return VC_PSV_OPERATION_WRITE_U32;
+    case UINT16_C(0xb200):
+        return VC_PSV_OPERATION_SELECT_MODULE_BASE;
     default:
         return VC_PSV_OPERATION_OPAQUE;
     }
@@ -196,6 +198,23 @@ static void taint_active_cheat(vc_psv_cheat *cheats,
     }
 }
 
+static void finalize_active_cheat(vc_psv_cheat *cheats,
+                                  size_t cheat_capacity,
+                                  size_t active_cheat,
+                                  bool relative_base_active,
+                                  bool relative_write_seen,
+                                  bool *active_cheat_tainted,
+                                  vc_psv_report *report)
+{
+    if (active_cheat != VC_PSV_NO_INDEX &&
+        relative_base_active && !relative_write_seen) {
+        ++report->invalid_operation_sequences;
+        taint_active_cheat(cheats, cheat_capacity, active_cheat,
+                           VC_PSV_TRANSLATION_MALFORMED,
+                           active_cheat_tainted, report);
+    }
+}
+
 static void discard_partial_outputs(vc_psv_line *lines,
                                     vc_psv_cheat *cheats,
                                     vc_psv_operation *operations,
@@ -232,6 +251,8 @@ vc_psv_status vc_psv_parse(const char *source,
     size_t cheat_bytes;
     size_t operation_bytes;
     bool active_cheat_tainted = false;
+    bool relative_base_active = false;
+    bool relative_write_seen = false;
     vc_psv_report result;
 
     if (report == NULL || (source == NULL && source_size != 0) ||
@@ -328,6 +349,9 @@ vc_psv_status vc_psv_parse(const char *source,
             size_t description_begin = trimmed_begin + 3u;
             const size_t cheat_index = result.total_cheats;
 
+            finalize_active_cheat(cheats, cheat_capacity, active_cheat,
+                                  relative_base_active, relative_write_seen,
+                                  &active_cheat_tainted, &result);
             if ((activation != '0' && activation != '1') ||
                 (description_begin < trimmed_end && !ascii_space(source[description_begin]))) {
                 if (stored_line != NULL) {
@@ -340,6 +364,8 @@ vc_psv_status vc_psv_parse(const char *source,
                 active_cheat = VC_PSV_NO_INDEX;
                 active_cheat_operation_count = 0;
                 active_cheat_tainted = false;
+                relative_base_active = false;
+                relative_write_seen = false;
                 continue;
             }
             while (description_begin < trimmed_end && ascii_space(source[description_begin])) {
@@ -373,6 +399,8 @@ vc_psv_status vc_psv_parse(const char *source,
             active_cheat = cheat_index;
             active_cheat_operation_count = 0;
             active_cheat_tainted = false;
+            relative_base_active = false;
+            relative_write_seen = false;
             continue;
         }
 
@@ -380,6 +408,8 @@ vc_psv_status vc_psv_parse(const char *source,
             uint16_t code = 0;
             uint32_t address = 0;
             uint32_t value = 0;
+            vc_psv_operation_kind kind;
+            vc_psv_address_mode address_mode = VC_PSV_ADDRESS_NOT_APPLICABLE;
             const size_t operation_index = result.total_operations;
 
             if (active_cheat == VC_PSV_NO_INDEX ||
@@ -394,8 +424,34 @@ vc_psv_status vc_psv_parse(const char *source,
                 continue;
             }
 
+            kind = operation_kind(code);
+            if (kind == VC_PSV_OPERATION_SELECT_MODULE_BASE) {
+                if (active_cheat_operation_count != 0 ||
+                    relative_base_active || address > UINT32_C(0xff) ||
+                    value > UINT32_C(1)) {
+                    ++result.invalid_operation_sequences;
+                    taint_active_cheat(cheats, cheat_capacity, active_cheat,
+                                       VC_PSV_TRANSLATION_MALFORMED,
+                                       &active_cheat_tainted, &result);
+                } else {
+                    relative_base_active = true;
+                    relative_write_seen = false;
+                    taint_active_cheat(cheats, cheat_capacity, active_cheat,
+                                       VC_PSV_TRANSLATION_MODULE_RELATIVE,
+                                       &active_cheat_tainted, &result);
+                }
+            } else if (kind != VC_PSV_OPERATION_OPAQUE) {
+                address_mode = relative_base_active
+                                   ? VC_PSV_ADDRESS_SELECTED_MODULE_RELATIVE
+                                   : VC_PSV_ADDRESS_ABSOLUTE;
+                if (relative_base_active) {
+                    relative_write_seen = true;
+                }
+            }
+
             if (operation_index < operation_capacity) {
-                operations[operation_index].kind = operation_kind(code);
+                operations[operation_index].kind = kind;
+                operations[operation_index].address_mode = address_mode;
                 operations[operation_index].legacy_code = code;
                 operations[operation_index].address = address;
                 operations[operation_index].value = value;
@@ -408,7 +464,7 @@ vc_psv_status vc_psv_parse(const char *source,
                 stored_line->cheat_index = active_cheat;
                 stored_line->operation_index = operation_index;
             }
-            if (operation_kind(code) == VC_PSV_OPERATION_OPAQUE) {
+            if (kind == VC_PSV_OPERATION_OPAQUE) {
                 ++result.unsupported_operations;
                 taint_active_cheat(cheats, cheat_capacity, active_cheat,
                                    VC_PSV_TRANSLATION_REQUIRES_UNSUPPORTED,
@@ -435,6 +491,9 @@ vc_psv_status vc_psv_parse(const char *source,
                            &active_cheat_tainted, &result);
     }
 
+    finalize_active_cheat(cheats, cheat_capacity, active_cheat,
+                          relative_base_active, relative_write_seen,
+                          &active_cheat_tainted, &result);
     if (result.stored_lines != result.total_lines ||
         result.stored_cheats != result.total_cheats ||
         result.stored_operations != result.total_operations) {

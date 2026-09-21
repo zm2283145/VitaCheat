@@ -35,13 +35,27 @@ The parser indexes:
 - comments, blank lines, opaque extension lines, and malformed header/code
   attempts as distinct classes.
 
-Only three code identifiers receive executable meaning in the import model:
+Four code identifiers receive structured meaning in import schema version 2:
 
 | Legacy identifier | Imported meaning |
 | --- | --- |
 | `$0000` | direct 8-bit write |
 | `$0100` | direct 16-bit write |
 | `$0200` | direct 32-bit write |
+| `$B200` | select a module serial and segment for following relative writes |
+
+Direct writes before a selector are marked absolute. A valid `$B200` must be
+the first operation in its cheat, use a module serial from `0x00` through
+`0xFF`, select segment `0` or `1`, and be followed by at least one recognized
+typed write. Those following writes are marked
+`VC_PSV_ADDRESS_SELECTED_MODULE_RELATIVE`; the selector itself retains its two
+numeric words as module serial and segment index.
+
+Duplicate selectors, selectors after another operation, invalid selector
+fields, and selectors without a following typed write increment
+`invalid_operation_sequences` and mark the complete cheat malformed. Importing
+this structure still grants no authority to resolve a module or execute a
+write.
 
 Every other valid identifier is an opaque operation. It retains its exact raw
 line and parsed numeric words but is not silently translated into a new action.
@@ -61,9 +75,13 @@ authoring tool can represent more of it.
 ## What is deliberately not implemented
 
 - No code is executed and no process memory is accessed.
-- Pointer, condition, button, compression, MOV, ARM-write, and B2 semantics are
+- Pointer, condition, button, compression, MOV, and ARM-write semantics are
   not yet translated. Each family needs its own primary-source interpretation,
   hostile-input tests, execution bounds, and Vita hardware gate.
+- `$B200` is translated only into a bounded import representation. Runtime
+  module/segment resolution is not implemented and must bind the selector to a
+  verified module identity for the current process generation before any
+  relative write can be offered.
 - A `.suprx` binary is never treated as a data file.
 - Legacy absolute addresses are not automatically considered safe. Before a
   future write is offered, conversion must bind it to a verified title, module,
@@ -71,6 +89,7 @@ authoring tool can represent more of it.
 - `_V1` is represented as legacy intent; it will not bypass the new tool's
   explicit arming and safety policy.
 
-Ratchet & Clank Collection cheat files will be a real-world compatibility
-fixture once a read-only Vita-side loader exists. The first hardware test will
-parse and display entries without enabling writes.
+The US Ratchet & Clank Collection `PCSA00133` first-game bolt entry is now a
+host fixture for a valid `$B200` plus `$0100` chain. Once a read-only Vita-side
+loader exists, the first hardware step will parse and display that entry and
+its resolved module identity without enabling writes.

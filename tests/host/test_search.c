@@ -298,6 +298,252 @@ static void test_snapshots_are_immutable(void)
     CHECK(memcmp(current, current_copy, sizeof(current)) == 0);
 }
 
+static uint32_t next_random(uint32_t *state)
+{
+    uint32_t value = *state;
+
+    value ^= value << 13u;
+    value ^= value >> 17u;
+    value ^= value << 5u;
+    *state = value;
+    return value;
+}
+
+static uint32_t reference_read(const uint8_t *bytes, size_t width)
+{
+    uint32_t value = 0;
+    size_t index;
+
+    for (index = 0; index < width; ++index) {
+        value |= (uint32_t)bytes[index] << (index * 8u);
+    }
+
+    return value;
+}
+
+static uint32_t reference_mask(size_t width)
+{
+    if (width == 1) {
+        return UINT32_C(0xff);
+    }
+    if (width == 2) {
+        return UINT32_C(0xffff);
+    }
+    return UINT32_MAX;
+}
+
+static int64_t reference_signed(uint32_t bits, size_t width)
+{
+    const uint64_t mask = (uint64_t)reference_mask(width);
+    const uint64_t value = (uint64_t)bits & mask;
+    const uint64_t sign = UINT64_C(1) << (width * 8u - 1u);
+
+    if ((value & sign) != 0) {
+        return -(int64_t)((mask - value) + UINT64_C(1));
+    }
+    return (int64_t)value;
+}
+
+static int reference_matches(vc_scalar_type type,
+                             vc_relation relation,
+                             uint32_t previous,
+                             uint32_t current,
+                             uint32_t constant,
+                             size_t width)
+{
+    const uint32_t mask = reference_mask(width);
+
+    previous &= mask;
+    current &= mask;
+    constant &= mask;
+
+    switch (relation) {
+    case VC_RELATION_EQUAL:
+        return current == constant;
+    case VC_RELATION_NOT_EQUAL:
+        return current != constant;
+    case VC_RELATION_CHANGED:
+        return current != previous;
+    case VC_RELATION_UNCHANGED:
+        return current == previous;
+    case VC_RELATION_INCREASED:
+        if (type == VC_SCALAR_S8 || type == VC_SCALAR_S16 || type == VC_SCALAR_S32) {
+            return reference_signed(current, width) > reference_signed(previous, width);
+        }
+        return current > previous;
+    case VC_RELATION_DECREASED:
+        if (type == VC_SCALAR_S8 || type == VC_SCALAR_S16 || type == VC_SCALAR_S32) {
+            return reference_signed(current, width) < reference_signed(previous, width);
+        }
+        return current < previous;
+    default:
+        return 0;
+    }
+}
+
+static void test_initial_search_properties(void)
+{
+    uint32_t random_state = UINT32_C(0x8b5ad4ce);
+    uint8_t bytes[64];
+    uint8_t original[64];
+    uint32_t guarded[66];
+    uint32_t expected[64];
+    size_t iteration;
+
+    for (iteration = 0; iteration < 2000; ++iteration) {
+        vc_query q;
+        size_t size;
+        size_t width;
+        size_t capacity;
+        size_t expected_total = 0;
+        size_t expected_written = 0;
+        size_t written = SIZE_MAX;
+        size_t total = SIZE_MAX;
+        size_t index;
+        vc_status status;
+
+        for (index = 0; index < sizeof(bytes); ++index) {
+            bytes[index] = (uint8_t)next_random(&random_state);
+        }
+        memcpy(original, bytes, sizeof(bytes));
+
+        q.type = (vc_scalar_type)(next_random(&random_state) % 6u);
+        q.relation = (next_random(&random_state) & 1u) != 0
+                         ? VC_RELATION_EQUAL
+                         : VC_RELATION_NOT_EQUAL;
+        q.value_bits = next_random(&random_state);
+        q.stride = next_random(&random_state) % 8u + 1u;
+        size = (size_t)(next_random(&random_state) % (sizeof(bytes) + 1u));
+        width = vc_scalar_width(q.type);
+        capacity = (size_t)(next_random(&random_state) % (sizeof(expected) / sizeof(expected[0]) + 1u));
+
+        for (index = 0; index < sizeof(guarded) / sizeof(guarded[0]); ++index) {
+            guarded[index] = UINT32_C(0xa5a5a5a5);
+        }
+
+        if (size >= width) {
+            const size_t last_offset = size - width;
+            size_t offset = 0;
+
+            for (;;) {
+                const uint32_t current = reference_read(bytes + offset, width);
+
+                if (reference_matches(q.type, q.relation, 0, current, q.value_bits, width)) {
+                    if (expected_written < capacity) {
+                        expected[expected_written++] = (uint32_t)offset;
+                    }
+                    ++expected_total;
+                }
+                if ((size_t)q.stride > last_offset - offset) {
+                    break;
+                }
+                offset += (size_t)q.stride;
+            }
+        }
+
+        status = vc_search_initial(bytes, size, &q, guarded + 1, capacity, &written, &total);
+        CHECK(status == (expected_total > capacity ? VC_STATUS_TRUNCATED : VC_STATUS_OK));
+        CHECK(written == expected_written);
+        CHECK(total == expected_total);
+        CHECK(memcmp(guarded + 1, expected, expected_written * sizeof(expected[0])) == 0);
+        CHECK(guarded[0] == UINT32_C(0xa5a5a5a5));
+        CHECK(guarded[capacity + 1] == UINT32_C(0xa5a5a5a5));
+        CHECK(memcmp(bytes, original, sizeof(bytes)) == 0);
+    }
+}
+
+static void test_refinement_properties(void)
+{
+    uint32_t random_state = UINT32_C(0x16c3a72d);
+    uint8_t previous[64];
+    uint8_t current[64];
+    uint8_t previous_copy[64];
+    uint8_t current_copy[64];
+    uint32_t candidates[64];
+    uint32_t candidates_copy[64];
+    uint32_t guarded[66];
+    uint32_t expected[64];
+    size_t iteration;
+
+    for (iteration = 0; iteration < 2000; ++iteration) {
+        vc_query q;
+        size_t size;
+        size_t width;
+        size_t capacity;
+        size_t candidate_count = 0;
+        size_t expected_total = 0;
+        size_t expected_written = 0;
+        size_t written = SIZE_MAX;
+        size_t total = SIZE_MAX;
+        size_t index;
+        vc_status status;
+
+        for (index = 0; index < sizeof(previous); ++index) {
+            previous[index] = (uint8_t)next_random(&random_state);
+            current[index] = (uint8_t)next_random(&random_state);
+        }
+        memcpy(previous_copy, previous, sizeof(previous));
+        memcpy(current_copy, current, sizeof(current));
+
+        q.type = (vc_scalar_type)(next_random(&random_state) % 6u);
+        q.relation = (vc_relation)(next_random(&random_state) % 6u);
+        q.value_bits = next_random(&random_state);
+        q.stride = next_random(&random_state) % 8u + 1u;
+        size = (size_t)(next_random(&random_state) % (sizeof(previous) + 1u));
+        width = vc_scalar_width(q.type);
+        capacity = (size_t)(next_random(&random_state) % (sizeof(expected) / sizeof(expected[0]) + 1u));
+
+        if (size >= width) {
+            const size_t last_offset = size - width;
+
+            for (index = 0; index <= last_offset; ++index) {
+                if ((next_random(&random_state) & 1u) != 0) {
+                    candidates[candidate_count++] = (uint32_t)index;
+                }
+            }
+        }
+        memcpy(candidates_copy, candidates, candidate_count * sizeof(candidates[0]));
+
+        for (index = 0; index < candidate_count; ++index) {
+            const size_t offset = (size_t)candidates[index];
+            const uint32_t before = reference_read(previous + offset, width);
+            const uint32_t after = reference_read(current + offset, width);
+
+            if (reference_matches(q.type, q.relation, before, after, q.value_bits, width)) {
+                if (expected_written < capacity) {
+                    expected[expected_written++] = candidates[index];
+                }
+                ++expected_total;
+            }
+        }
+
+        for (index = 0; index < sizeof(guarded) / sizeof(guarded[0]); ++index) {
+            guarded[index] = UINT32_C(0x5a5a5a5a);
+        }
+
+        status = vc_search_refine(previous, current, size, candidates, candidate_count,
+                                  &q, guarded + 1, capacity, &written, &total);
+        CHECK(status == (expected_total > capacity ? VC_STATUS_TRUNCATED : VC_STATUS_OK));
+        CHECK(written == expected_written);
+        CHECK(total == expected_total);
+        CHECK(memcmp(guarded + 1, expected, expected_written * sizeof(expected[0])) == 0);
+        CHECK(guarded[0] == UINT32_C(0x5a5a5a5a));
+        CHECK(guarded[capacity + 1] == UINT32_C(0x5a5a5a5a));
+        CHECK(memcmp(previous, previous_copy, sizeof(previous)) == 0);
+        CHECK(memcmp(current, current_copy, sizeof(current)) == 0);
+        CHECK(memcmp(candidates, candidates_copy, candidate_count * sizeof(candidates[0])) == 0);
+
+        written = SIZE_MAX;
+        total = SIZE_MAX;
+        status = vc_search_refine(previous, current, size, candidates_copy, candidate_count,
+                                  &q, candidates_copy, capacity, &written, &total);
+        CHECK(status == (expected_total > capacity ? VC_STATUS_TRUNCATED : VC_STATUS_OK));
+        CHECK(written == expected_written);
+        CHECK(total == expected_total);
+        CHECK(memcmp(candidates_copy, expected, expected_written * sizeof(expected[0])) == 0);
+    }
+}
+
 int main(void)
 {
     test_initial_little_endian_and_stride();
@@ -309,6 +555,8 @@ int main(void)
     test_empty_and_invalid_inputs();
     test_alias_and_zero_capacity_guards();
     test_snapshots_are_immutable();
+    test_initial_search_properties();
+    test_refinement_properties();
 
     if (failures != 0) {
         fprintf(stderr, "%d VitaCheat host test(s) failed\n", failures);

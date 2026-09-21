@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define VC_PSV_IMPORT_SCHEMA_VERSION UINT32_C(1)
+#define VC_PSV_IMPORT_SCHEMA_VERSION UINT32_C(2)
 #define VC_PSV_MAX_SOURCE_BYTES (UINT32_C(1024) * UINT32_C(1024))
 #define VC_PSV_NO_INDEX SIZE_MAX
 
@@ -37,14 +37,22 @@ typedef enum vc_psv_operation_kind {
     VC_PSV_OPERATION_OPAQUE = 0,
     VC_PSV_OPERATION_WRITE_U8,
     VC_PSV_OPERATION_WRITE_U16,
-    VC_PSV_OPERATION_WRITE_U32
+    VC_PSV_OPERATION_WRITE_U32,
+    VC_PSV_OPERATION_SELECT_MODULE_BASE
 } vc_psv_operation_kind;
 
 typedef enum vc_psv_translation_state {
     VC_PSV_TRANSLATION_DIRECT_ONLY = 0,
+    VC_PSV_TRANSLATION_MODULE_RELATIVE,
     VC_PSV_TRANSLATION_REQUIRES_UNSUPPORTED,
     VC_PSV_TRANSLATION_MALFORMED
 } vc_psv_translation_state;
+
+typedef enum vc_psv_address_mode {
+    VC_PSV_ADDRESS_NOT_APPLICABLE = 0,
+    VC_PSV_ADDRESS_ABSOLUTE,
+    VC_PSV_ADDRESS_SELECTED_MODULE_RELATIVE
+} vc_psv_address_mode;
 
 typedef struct vc_psv_span {
     uint32_t offset;
@@ -75,7 +83,12 @@ typedef struct vc_psv_cheat {
 
 typedef struct vc_psv_operation {
     vc_psv_operation_kind kind;
+    vc_psv_address_mode address_mode;
     uint16_t legacy_code;
+    /*
+     * Writes use address/value normally. SELECT_MODULE_BASE stores the module
+     * serial in address and the segment index in value.
+     */
     uint32_t address;
     uint32_t value;
     size_t cheat_index;
@@ -93,6 +106,7 @@ typedef struct vc_psv_report {
     size_t stored_operations;
     size_t unsupported_operations;
     size_t non_direct_cheats;
+    size_t invalid_operation_sequences;
     size_t malformed_lines;
     size_t legacy_limit_violations;
 } vc_psv_report;

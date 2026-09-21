@@ -14,7 +14,7 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
 - [x] Preserve unsupported legacy codes as opaque records without executing
       guessed behavior.
 - [x] Portable, debounced five-second Select-hold activation state machine.
-- [ ] Add sanitizer, fuzz, and property-based CI coverage.
+- [x] Add sanitizer, fuzz, and property-based CI coverage.
 - [ ] Add snapshot/session file formats with strict version and size limits.
 
 ## 1. Search engine coverage
@@ -33,6 +33,9 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
       versioned import representation.
 - [ ] Implement and test each remaining documented legacy VitaCheat code family
       independently; keep unknown codes opaque indefinitely.
+- [x] Import and independently validate the `$B200` module-base selection
+      family, including chained-operation scope and malformed-sequence handling.
+      Runtime module resolution and write execution remain separate gates.
 - [ ] Add a conversion/export tool that proves byte-exact `.psv` round trips.
 - [ ] Bind every record to title ID, module identity, and module-relative
       offsets.
@@ -56,9 +59,17 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
 
 ## 5. On-device search UI
 
+- [x] Define and host-test bounded, generation-bound gameplay-thread pause
+      ownership with reverse rollback, retryable cleanup, and forced expiry.
 - [ ] Search, refine, cancel, sort, and inspect candidates on Vita.
 - [ ] Feed Vita controller samples into the tested five-second Select trigger
       and render the menu only after its one-shot event.
+- [ ] In the kernel adapter, build an explicit gameplay-thread allowlist that
+      excludes the injected menu, input, renderer, watchdog, and cleanup paths.
+- [ ] Couple menu open/close to transactional pause/resume and refuse to open
+      when suspension or rollback is incomplete.
+- [ ] Prove supported display hooks per rendering path before claiming
+      cross-title overlay compatibility.
 - [ ] Preserve progress within fixed memory and time budgets.
 - [ ] Build accessible controls and clear current-operation feedback.
 
@@ -68,6 +79,25 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
 - [ ] Keep an original-value ledger and restore on disable or exit when safe.
 - [ ] Coordinate target stop/resume without leaving threads suspended.
 - [ ] Add watchdog, disconnect, title-exit, and partial-failure cleanup gates.
+- [ ] Run the first reversible hardware write gate against the user's US Ratchet
+      & Clank Collection only after all preceding read and cleanup gates pass:
+      - start from the `PCSA00133` US v1.00/NoNpDrm database entry, then require
+        the exact installed title ID, region, version, module identity, and
+        process generation observed on the test device;
+      - import the matching upstream `.psv` entry instead of embedding its
+        address or value in code;
+      - accept only the first game's `max.Schrauben` bolt operation after the
+        preceding `$B200` module-base selector and chained `$0100` typed write
+        are both supported, validated, and resolved for the exact build;
+      - prove the resolved address is inside an allowlisted writable user
+        region for that exact build;
+      - display and ledger the original bolt count before explicit on-device
+        one-shot authorization;
+      - restore the original value on menu close, timeout, title exit, unload,
+        or any partial failure, and do not enable freeze or save the game during
+        this initial gate;
+      - retain artifact hashes, logs, observed before/after/restored values, and
+        a scoped hardware record.
 
 ## 7. Paired PC companion
 
@@ -84,13 +114,19 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
 - [ ] Add an opt-in review and publishing workflow after read-only download is
       mature.
 
-## 9. Narrow system integration and later PSPemu research
+## 9. Narrow hybrid integration and later PSPemu research
 
-- [ ] Add a kernel companion only for documented cross-process needs that user
-      mode cannot satisfy; keep scanning, UI, networking, and database logic in
-      user mode.
-- [ ] Keep any kernel interface narrow, versioned, caller-scoped, and free of
+- [ ] Implement a narrow kernel service for target lifecycle, cooperative
+      thread control, and bounded cross-process memory access without exposing
       general arbitrary kernel read/write operations.
+- [ ] Implement an injected user plugin for the five-second Select trigger,
+      display hook, menu rendering, search state, and user approvals.
+- [ ] Define a versioned, bounded request ABI between the user plugin and kernel
+      service with caller, process-generation, capability, and size checks.
+- [ ] Keep parsing, rendering, protocol handling, and database logic out of
+      kernel context.
+- [ ] Validate process-generation binding, unload, title exit, suspend/resume,
+      crash, and partial-hook rollback before enabling memory writes.
 - [ ] Research the Vita-side and emulator-side pieces required for PSP and PS1
       environments as a separate later target, not promised compatibility.
 
