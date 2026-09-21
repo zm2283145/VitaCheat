@@ -16,6 +16,10 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
 - [x] Portable, debounced five-second Select-hold activation state machine.
 - [x] Versioned little-endian Quick Menu launch ABI and allocation-free,
       generation-bound single-request broker.
+- [x] Allocation-free launch service front door with trusted caller
+      attestation, sequenced foreground snapshots, exact copy boundaries,
+      fail-closed copy-out retry, lifecycle cleanup, and nonblocking
+      serialization.
 - [x] Add sanitizer, fuzz, and property-based CI coverage.
 - [ ] Add snapshot/session file formats with strict version and size limits.
 
@@ -69,6 +73,9 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
 - [x] Host-test the launch-only SceShell role, exact game-plugin claim binding,
       overlay-readiness gate, expiry, lifecycle invalidation, and nonrepeating
       request IDs without adding native adapters.
+- [x] Host-test the launch-only kernel-service policy boundary, including
+      caller/process/module attestation inputs, PID-generation reuse, title
+      switches, copy faults, response retries, stop/reset, and reentrancy.
 - [ ] Send only a short-lived, generation-bound open request from the Quick Menu;
       never grant it read, pause, write, or freeze authority.
 - [ ] Let the matching injected game plugin claim the request after the system
@@ -135,7 +142,10 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
 - [x] Define and host-test a versioned, bounded request ABI for the future user
       plugin/kernel-service boundary plus a launch-only SceShell role, with
       caller, process-generation, capability, request-ID, expiry, and size
-      checks. Native transport and caller-identity adapters remain unimplemented.
+      checks.
+- [x] Implement the portable launch-only service core and precise platform
+      adapter callback contract. Native Vita syscall/export glue, caller
+      identity derivation, and foreground discovery remain unimplemented.
 - [ ] Keep parsing, rendering, protocol handling, and database logic out of
       kernel context.
 - [ ] Validate process-generation binding, unload, title exit, suspend/resume,

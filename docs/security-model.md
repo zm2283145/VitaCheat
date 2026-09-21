@@ -17,8 +17,10 @@ be executed out of sequence. The five-second Select helper consumes only a
 button state and timestamp; it grants no memory capability by itself. The
 portable pause coordinator calls only adapter-supplied operations and cannot
 enumerate or suspend a real thread on its own. The portable Quick Menu broker
-similarly validates and serializes launch state but has no syscall, caller
-authentication, process discovery, hook, injection, or memory authority.
+and service similarly validate and serialize launch state. The service consumes
+only injected exact-copy, caller-attestation, foreground-snapshot, and cleanup
+callbacks; no Vita syscall implementation, process discovery, hook, injection,
+or memory authority is present.
 
 ## Authority model
 
@@ -55,10 +57,31 @@ authentication, process discovery, hook, injection, or memory authority.
   not patch unknown SceShell offsets as a fallback.
 - All Quick Menu widgets, event handlers, textures, and worker state have
   symmetric stop cleanup.
+- The service never decodes directly from caller memory. It validates lengths,
+  copies exactly 64 bytes into a zeroed local request, fully validates and
+  attests it, dispatches, encodes into a zeroed 72-byte local response, and
+  copies out exactly those 72 bytes.
+- Caller role, process generation, and module-load generation come from a
+  privileged attestation callback. Foreground PID, process generation, bounded
+  title identity, and observation sequence come from a separate trusted
+  snapshot callback. Wire values can only match these facts, never define them.
+- Copy-in failure occurs before broker mutation. Copy-out failure retains one
+  exact result journal; unrelated calls are blocked until exact retry or a
+  lifecycle event revokes the journal. Partial copies cannot expose padding or
+  uninitialized kernel bytes.
+- A nonblocking atomic transaction gate rejects reentry and concurrent service
+  calls. Callbacks run without an internal mutex, and lifecycle events that
+  encounter `BUSY` must be retried rather than silently dropped.
+- Stop/reset scrub the pending record, foreground snapshot, and result journal
+  while preserving the nonwrapping request-ID counter. Stop remains revoked
+  even when platform cleanup reports failure.
+- The v1 operation and capability sets remain launch-only. Unknown future
+  memory, pause, search, patch, or freeze operations/bits fail closed.
 
-Only the portable broker/ABI is implemented. Native QuickMenuReborn widgets,
-SceShell hooks, service syscalls, caller identity derivation, game-plugin
-injection, and presentation adapters remain unavailable.
+The portable broker/ABI and launch-only service policy are implemented. Native
+QuickMenuReborn widgets, SceShell hooks, Vita service syscalls/exports, concrete
+caller identity derivation, game-plugin injection, and presentation adapters
+remain unavailable.
 
 ## Menu pause rules
 

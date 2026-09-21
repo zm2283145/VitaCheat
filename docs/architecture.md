@@ -26,7 +26,10 @@ The portable core also owns authority-free helpers:
   one process generation, and retains failed resumes for retry; and
 - a bounded Quick Menu launch broker with a fixed little-endian byte ABI,
   explicit caller roles/capabilities, one pending request, and retained terminal
-  status.
+  status; and
+- a launch-only service front door that owns trusted caller attestation,
+  sequenced foreground snapshots, exact user-copy boundaries, lifecycle
+  dispatch, nonblocking serialization, and copy-out recovery.
 
 None of these helpers reads controller hardware, enumerates or suspends threads,
 opens files, renders UI, or writes memory. Those responsibilities remain in
@@ -59,19 +62,58 @@ process ID, and nonzero generation must match.
 This is serialization, validation, and pure state only. It does not authenticate
 a real Vita caller or provide a syscall, hook, widget, injection path,
 cross-process operation, thread control, firmware offset, or hardware access.
-Those are adapter milestones and must derive caller identity rather than trust
-wire fields.
+Those are adapter milestones.
+
+### Portable launch service boundary
+
+`include/vitacheat/launch_service.h` defines the precise privileged-adapter
+contract without importing VitaSDK. The front door first copies exactly 64
+untrusted bytes into a zeroed local buffer. It then asks injected callbacks to
+attest the caller from process and loader identity and to return an atomic,
+sequenced foreground snapshot. The callback-produced role, caller PID and
+generation, module-load generation, foreground PID and generation, bounded
+title identity, and trusted monotonic time are never taken from caller memory.
+Wire fields must agree with them before broker dispatch.
+
+The service rejects unknown callers before broker mutation. `SceShell` can
+submit or query only the launch-only v1 capability set. A game plugin can
+claim, cancel, or query only for its own exact PID and nonzero generation, while
+that same target is foreground. Snapshot sequence rollback or inconsistent
+reuse fails closed. PID-generation reuse, title changes, no-foreground
+transitions, process exit, plugin unload, reset, and stop route through broker
+lifecycle operations.
+
+All public calls share one nonblocking C11 atomic transaction gate. Identity,
+foreground, copy, and cleanup callbacks execute without an internal mutex and
+must not reenter; reentry and concurrent calls return `BUSY`, and platform
+lifecycle events must be retried before acknowledgement. No allocation or
+unbounded wait occurs.
+
+Responses are encoded into a zeroed fixed local buffer and exactly 72 bytes are
+copied out. If copy-out fails after dispatch, the service retains one exact
+response journal keyed to the copied request, attested caller/module instance,
+and target identity. Only an exact retry can retrieve it; unrelated dispatch
+and tick calls fail with `RESULT_PENDING`. A target change, process exit,
+plugin unload, reset, or stop revokes the journal. This keeps submit, claim,
+cancel, and status idempotent or explicitly consumed after a partial copy,
+without reporting a success-shaped fallback.
+
+The adapter callbacks are the current native boundary. This repository has no
+documented VitaSDK/taiHEN kernel syscall/export scaffold from which a real
+`.skprx` transport can be compiled without guessing APIs, so this layer does
+not add native module glue. The existing ordinary user-mode self-test remains
+unchanged.
 
 The portable target contract is C11 plus an integer pointer type (`uintptr_t`)
 wide enough to represent object ranges. That holds for the supported Windows
 host and ARM Vita targets and lets the parser reject overlapping source and
 output buffers without relying on undefined relational pointer comparisons.
 
-## Future kernel service
+## Future privileged capabilities
 
-The selected privileged component is a narrow kernel service. It exposes
-explicit capabilities to the injected user plugin rather than one general
-memory service:
+The implemented service is launch-only. A later privileged component may
+expose the following separately versioned capabilities to the injected user
+plugin rather than one general memory service:
 
 1. discover a title and verified modules;
 2. list bounded, allowlisted user-memory regions;
@@ -81,9 +123,11 @@ memory service:
 6. apply typed writes or freezes from declarative records;
 7. restore state and release target ownership on every exit path.
 
-The current adapter remains a buffer-only Vita self-test. Cross-process access,
-kernel hooks, user-plugin injection, and overlay rendering are later milestones
-with their own threat models and hardware evidence.
+None of these capabilities is represented by the v1 operation or capability
+mask; unknown operations and bits fail closed. The current Vita target remains
+a buffer-only user-mode self-test. Cross-process access, kernel hooks,
+user-plugin injection, and overlay rendering are later milestones with their
+own threat models and hardware evidence.
 
 ## Future native Quick Menu launcher and injected in-game menu
 
@@ -94,9 +138,10 @@ foreground title generation. The request has a unique ID, short expiry, and no
 read, pause, write, or freeze capability. Duplicate requests are idempotent;
 foreground-title changes and expiry discard them.
 
-The portable broker and v1 ABI implementing these rules are present. The
-QuickMenuReborn widget, SceShell transport, caller-authenticating kernel adapter,
-and injected game plugin described below are not.
+The portable broker, v1 ABI, and caller-attesting portable service policy
+implementing these rules are present. The QuickMenuReborn widget, SceShell
+transport, Vita caller/foreground adapter, kernel export, and injected game
+plugin described below are not.
 
 The QuickMenuReborn public widget API is preferred over direct SceShell offset
 patching. The add-on uses weak imports, registers all widgets and textures
@@ -147,10 +192,12 @@ code. Downloads, cache updates, and rollbacks will be bounded and atomic.
 
 ## Kernel service authority boundary
 
-The service must keep raw kernel operations behind a small versioned request
-ABI, derive and validate the user-plugin caller and target ownership, expose no
-arbitrary kernel-memory primitive, clean up after title exits and unload, and
-pass independent review plus a disposable hardware gate. Parsing, search
+The portable launch service keeps its broker behind the versioned v1 request
+ABI, validates adapter-attested caller and target ownership, exposes no memory
+primitive, and cleans up on title exit, unload, reset, and stop. A future Vita
+adapter must implement the documented exact-copy, strong process/module
+attestation, foreground snapshot, and cleanup callbacks with public,
+compile-verified APIs before a native target is added. Parsing, search
 semantics, menu state, rendering, network framing, and database logic stay in
 portable or user-mode components.
 

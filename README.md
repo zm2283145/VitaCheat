@@ -9,7 +9,8 @@ This repository is an early scaffold. The current code is a portable,
 allocation-free memory snapshot search/refinement core, a lossless legacy
 VitaCheat `.psv` importer, and a deterministic menu-activation state machine,
 plus a transactional gameplay-thread pause coordinator and a versioned,
-allocation-free Quick Menu launch-request broker, all with host tests. A
+allocation-free Quick Menu launch-request broker, plus a caller-attesting,
+copy-bounded portable launch service front door, all with host tests. A
 separate ordinary user-mode Vita self-test now exercises the scanner and
 five-second Select menu against memory owned by that test app. It is not a
 plugin and does not attach to a process, suspend another application's threads,
@@ -77,9 +78,22 @@ The same portable milestone now also:
   only the exactly matching game plugin can claim or cancel;
 - records overlay readiness explicitly and invalidates requests on expiry,
   clock rollback, title/process changes, plugin unload, cancel, or reset.
+- places the launch broker behind an allocation-free service boundary that
+  copies exact fixed-size messages through injected user-copy callbacks;
+- derives caller role and process/module generations through an attestation
+  callback and rejects wire identities that disagree with trusted caller or
+  foreground metadata;
+- owns sequenced foreground snapshots, including bounded title identity, and
+  invalidates requests on PID reuse, title switch, process exit, plugin unload,
+  reset, or stop;
+- serializes calls with a nonblocking C11 atomic transaction gate and journals
+  an exact response across copy-out failure so a caller can retry without
+  repeating or hiding an authority change.
 
-The pause coordinator and launch broker have no platform authority by
-themselves; no imported operation is executed in this milestone. See
+The pause coordinator, launch broker, and launch service have no platform
+authority by themselves; their process identity, foreground, copy, and cleanup
+operations are injected by a future privileged adapter. No imported operation
+is executed in this milestone. See
 [docs/legacy-psv-compatibility.md](docs/legacy-psv-compatibility.md).
 
 The first Vita-facing build is the deliberately unprivileged and now
@@ -180,7 +194,10 @@ ctest --test-dir build-sanitize --output-on-failure
 
 For bounded libFuzzer coverage, add `-DVITACHEAT_BUILD_FUZZERS=ON` and run
 `build-sanitize/vitacheat_search_fuzzer -runs=10000 -max_len=520` plus
-`build-sanitize/vitacheat_launch_broker_fuzzer -runs=10000 -max_len=512`.
+`build-sanitize/vitacheat_launch_broker_fuzzer -runs=10000 -max_len=512` and
+`build-sanitize/vitacheat_launch_service_fuzzer -runs=10000 -max_len=512`.
+A dependency-free deterministic service smoke is also available as
+`make launch-service-fuzz-smoke`.
 
 VitaSDK is not required to build and run the host tests. Building the Vita
 self-test VPK does require VitaSDK.
@@ -230,11 +247,15 @@ listed only after their own gates pass.
 - `include/vitacheat/menu_activation.h` — portable Select-hold state machine.
 - `include/vitacheat/pause.h` — bounded pause ownership and cleanup contract.
 - `include/vitacheat/launch_broker.h` — v1 byte ABI and launch broker contract.
+- `include/vitacheat/launch_service.h` — trusted adapter callbacks, foreground
+  lifecycle, service statuses, and fixed-buffer front door.
 - `src/search.c` — portable little-endian implementation.
 - `src/legacy_psv.c` — syntax indexing and conservative operation mapping.
 - `src/menu_activation.c` — five-second one-shot activation logic.
 - `src/pause.c` — transactional suspend, rollback, resume, and expiry logic.
 - `src/launch_broker.c` — little-endian codec and launch-request state machine.
+- `src/launch_service.c` — caller attestation, exact copy boundary,
+  serialization, lifecycle synchronization, and copy-out result journal.
 - `tests/host/test_search.c` — native behavioral and boundary tests.
 - `tests/host/test_legacy_psv.c` — mixed-format, truncation, and fail-closed
   importer tests.
@@ -242,7 +263,11 @@ listed only after their own gates pass.
 - `tests/host/test_pause.c` — pause ownership, rollback, retry, and expiry tests.
 - `tests/host/test_launch_broker.c` — ABI vectors, authority, lifecycle, and
   bounded state-sequence tests.
+- `tests/host/test_launch_service.c` — trusted-metadata, copy-fault, lifecycle,
+  retry, reentrancy, and bounded service-model tests.
 - `tests/fuzz/fuzz_launch_broker.c` — bounded codec/dispatch/lifecycle fuzzer.
+- `tests/fuzz/fuzz_launch_service.c` — bounded untrusted-byte, metadata, copy,
+  and service-lifecycle fuzzer.
 - `vita-self-test/` — ordinary user-mode on-device menu and owned-buffer probe.
 - `docs/architecture.md` — component boundaries and data flow.
 - `docs/legacy-psv-compatibility.md` — compatibility guarantees and limits.

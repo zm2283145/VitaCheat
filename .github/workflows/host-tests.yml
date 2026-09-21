@@ -31,3 +31,5 @@ jobs:
         run: ./build-sanitize/vitacheat_search_fuzzer -runs=10000 -max_len=520
       - name: Run bounded launch broker fuzzer
         run: ./build-sanitize/vitacheat_launch_broker_fuzzer -runs=10000 -max_len=512
+      - name: Run bounded launch service fuzzer
+        run: ./build-sanitize/vitacheat_launch_service_fuzzer -runs=10000 -max_len=512
