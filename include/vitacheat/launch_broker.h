@@ -212,6 +212,14 @@ vc_launch_status vc_launch_broker_status(vc_launch_broker *broker,
                                          const vc_launch_request *request,
                                          vc_launch_response *response);
 
+/*
+ * A game-plugin STATUS request may use request_id zero to discover only a
+ * pending record for its exact target identity. The broker treats roles as
+ * untrusted labels; callers must expose discovery only through the launch
+ * service, which attests the game module and current foreground identity.
+ * SceShell STATUS requests still require the already-known request ID.
+ */
+
 vc_launch_status vc_launch_broker_dispatch_wire(
     vc_launch_broker *broker,
     const uint8_t *request_buffer,

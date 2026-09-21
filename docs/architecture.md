@@ -32,7 +32,10 @@ The portable core also owns authority-free helpers:
   dispatch, nonblocking serialization, and copy-out recovery; and
 - a launch-only Quick Menu controller that owns one bounded callback-to-worker
   handoff, exact foreground revalidation, submit/status transport, bounded
-  public status, and transactional UI-resource cleanup.
+  public status, and transactional UI-resource cleanup; and
+- an injected-game claimant/controller that owns coherent trusted identity,
+  overlay, and presentation observations, exact status/claim/cancel transport,
+  and a one-time local menu-open authorization.
 
 None of these helpers reads controller hardware, enumerates or suspends threads,
 opens files, renders UI, or writes memory. Those responsibilities remain in
@@ -61,6 +64,15 @@ with only `LAUNCH` and query with only `STATUS`; it cannot claim or cancel. The
 game plugin can claim only with `CLAIM`, after explicitly reporting
 presentation readiness, and can cancel only with `CANCEL`. Every request ID,
 process ID, and nonzero generation must match.
+
+Game-role `STATUS` has one deliberately narrow discovery form: request ID zero
+may return the pending request ID only when the target PID/generation matches.
+It returns absent for a nonmatching or terminal record. This does not change
+the byte ABI version or size, and `SceShell` still must provide the request ID
+it received from submission. Because a wire role is not authentication,
+discovery is safe only through the service front door: caller attestation,
+exact game PID/generation binding, and the matching current foreground
+snapshot all run before broker dispatch.
 
 This is serialization, validation, and pure state only. It does not authenticate
 a real Vita caller or provide a syscall, hook, widget, injection path,
@@ -158,6 +170,62 @@ callbacks therefore never run under the gate. Adapters must not invoke the
 supplied button or worker callback inline, and their callback-path foreground
 and signal operations must be bounded and nonblocking.
 
+### Portable injected-game claimant controller
+
+`include/vitacheat/launch_claimant.h` models the game-plugin role without
+injecting or hooking a title. Its coherent trusted-observation adapter supplies
+the authoritative game-plugin PID, nonzero process and module-load
+generations, bounded title identity, matching foreground snapshot, sequenced
+overlay state, and a presentation compatibility result for that exact module
+instance. A separate trusted monotonic clock and fixed-buffer service
+transport complete the adapter boundary.
+
+Start and reset generation-invalidate all prior work. Identity binding accepts
+only game-role metadata whose self PID/generation/title byte-match the present
+foreground target. Any identity-sequence change, PID reuse, process-generation
+change, module reload, title mismatch, foreground loss, foreground sequence
+rollback, or incoherent same-sequence reuse revokes local authority. The
+controller snapshots and revalidates the complete observation before and after
+every transport boundary.
+
+Overlay closure is not inferred from time. `UNKNOWN`, `OPEN`, and `CLOSING`
+all block transport, and the first `CLOSED` observation only starts a stable
+boundary. A second strictly newer `CLOSED` observation in the same overlay
+generation is required. Reopen or generation change resets the gate. The
+presentation adapter must report `READY` for the exact bound process and module
+generation. Both gates must remain byte-identical across claim transport;
+loss or a newer observation revokes an unconsumed authorization and closes
+local open state. The claimant never tries to close the system Quick Menu and
+does not hook a display API.
+
+The short callback-facing notification APIs only normalize and store trusted
+overlay/presentation observations. They never call transport. One worker step
+performs at most one exact game-role `STATUS`, `CLAIM`, or `CANCEL`; there is
+no generic operation passthrough. Discovery uses the attested zero-ID status
+form, then a later step claims the returned pending ID only while both gates
+hold. Service `BUSY` rebuilds with fresh trusted time; result-journal `RETRY`
+preserves the exact 64 request bytes. Exact response size, codec validity,
+operation, capability, target, request ID, timestamp, and state/status
+consistency are checked before any local authority changes.
+
+A successful claim does not render or pause. It creates one controller-local
+opaque token bound internally to the service request, complete trusted
+observation, stable overlay sequence, presentation sequence, lifecycle
+generation, and a short nonextending monotonic deadline. The future menu owner
+must consume it once and separately acknowledge open. Replay, duplicate claim
+status, stale completion, deadline boundary, rollback, reset, stop, unload, or
+observation change cannot mint or reopen authorization. Public status and text
+are bounded and omit every request, PID, title, process/module generation, and
+kernel detail.
+
+Stop and unload revoke callback work and scrub local request/token state before
+returning, even when cleanup fails. A known unclaimed request receives at most
+one safe game-role cancel attempt; an outstanding service-journal request is
+retrieved only by its exact bytes and never converted into local authority
+during stop. Plugin unload additionally invokes an idempotent adapter that must
+map the exact saved module identity to the launch-service plugin-unload
+lifecycle. Cleanup failure is explicit while the controller remains stopped.
+
 The portable target contract is C11 plus an integer pointer type (`uintptr_t`)
 wide enough to represent object ranges. That holds for the supported Windows
 host and ARM Vita targets and lets the parser reject overlapping source and
@@ -192,10 +260,12 @@ foreground title generation. The request has a unique ID, short expiry, and no
 read, pause, write, or freeze capability. Duplicate requests are idempotent;
 foreground-title changes and expiry discard them.
 
-The portable broker, v1 ABI, caller-attesting service policy, and add-on-side
-controller implementing these rules are present. The QuickMenuReborn widget
-adapter, SceShell transport, Vita caller/foreground adapter, kernel export, and
-injected game plugin described below are not.
+The portable broker, v1 ABI, caller-attesting service policy, add-on-side
+controller, and injected-game claimant/open-authorization state machine
+implementing these rules are present. The QuickMenuReborn widget adapter,
+SceShell transport, Vita caller/foreground/overlay adapter, kernel export,
+native game-plugin injection, display hooks, and menu renderer described below
+are not.
 
 The QuickMenuReborn public widget API is preferred over direct SceShell offset
 patching. Clean-room research pins the MIT API to
@@ -210,13 +280,13 @@ verified end to end, this repository does not vendor those declarations or
 generate a native `.suprx`. It does not fall back to direct firmware-specific
 SceShell patches.
 
-The injected game plugin owns display hooks, menu rendering/navigation, search
-state, configuration, and on-device approval. It can claim a pending request
-only when its caller process and generation match. It waits until the system UI
-overlay has closed and a supported presentation path has resumed before
-opening the menu. The existing five-second Select helper remains available for
-the standalone self-test and recovery experiments, not as the planned
-production launcher.
+The future native injected game plugin owns display hooks, menu
+rendering/navigation, search state, configuration, and on-device approval. Its
+portable claimant can claim a pending request only when its caller process,
+process generation, module instance, title, foreground snapshot, stable overlay
+closure, and presentation probe match. The existing five-second Select helper
+remains available for the standalone self-test and recovery experiments, not
+as the planned production launcher.
 
 Before the menu becomes interactive, the game plugin requests that the kernel
 service construct an explicit allowlist of gameplay threads for the current
@@ -234,6 +304,14 @@ A cross-title overlay is not assumed to be universal. Games can use different
 display paths and timing behavior, so each supported user-mode hook path needs a
 fail-closed compatibility gate. Until those gates exist, the repository must
 not claim that the menu works in every game.
+
+Public taiHEN APIs document module start/stop and user import/export hooking,
+but the pinned public interfaces do not provide one authoritative,
+end-to-end foreground-title plus Quick Menu overlay-state plus universal
+presentation-readiness source. The launch service also still lacks a pinned
+native syscall/export bridge. Therefore this layer deliberately adds no native
+compilation unit: its exact adapter contract is the blocker boundary, not a
+fake transport or guessed firmware-offset implementation.
 
 The full cheat browser does not run inside `SceShell`. Keeping the shell add-on
 to one button and status surface limits shell-wide failure impact and avoids

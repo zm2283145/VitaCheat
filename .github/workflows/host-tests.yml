@@ -44,3 +44,5 @@ jobs:
         run: ./build-sanitize/vitacheat_launch_service_fuzzer -runs=10000 -max_len=512
       - name: Run bounded Quick Menu launcher fuzzer
         run: ./build-sanitize/vitacheat_quick_menu_launcher_fuzzer -runs=10000 -max_len=512
+      - name: Run bounded game launch claimant fuzzer
+        run: ./build-sanitize/vitacheat_launch_claimant_fuzzer -runs=10000 -max_len=512

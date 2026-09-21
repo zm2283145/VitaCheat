@@ -97,14 +97,49 @@ callbacks and has no native SceShell or kernel dependency.
 - Public launcher status strings disclose no target, title, request, process,
   module, generation, nonce, kernel, or memory identity. A pending request is
   described only as waiting for the game to claim it.
+- A zero-ID `STATUS` request is valid only for the game role and discovers only
+  a pending record for its exact target. The service must first attest the game
+  module and match its PID/generation to the current foreground snapshot.
+  `SceShell`, nonmatching game callers, terminal records, and public formatters
+  receive no discovered request ID.
+- The game claimant binds authoritative self PID, process generation,
+  module-load generation, bounded title identity, and matching foreground
+  metadata from one coherent trusted adapter observation. Identity-sequence
+  changes or rollback, PID reuse, module reload, title mismatch, and missing or
+  changed foreground all revoke local authority.
+- Overlay closure requires two strictly sequenced closed observations in one
+  overlay generation. Unknown, open, closing, reopen, and generation changes
+  fail closed. No timer substitutes for this gate and the game claimant never
+  attempts to close the system overlay.
+- Presentation readiness is an abstract trusted adapter result bound to the
+  exact process/module generation. It must remain exact across claim transport.
+  Loss or any newer observation revokes unconsumed authorization and closes
+  local open state; this portable layer installs no display hook.
+- The claimant emits only game-role `STATUS/STATUS`, `CLAIM/CLAIM`, and
+  `CANCEL/CANCEL` envelopes through the existing codec. One worker step performs
+  at most one transport call; callback-facing observation updates never call
+  transport.
+- Successful claim creates one short-lived controller-local token rather than
+  opening the menu. The token is bound internally to request, identity,
+  overlay, presentation, and lifecycle generations, is consumed once, and
+  requires a separate open acknowledgement. It expires without extension and
+  is scrubbed on rollback, stale observation, reset, stop, or unload.
+- Stop/unload revoke local authority before bounded cleanup. Safe known pending
+  requests receive only game-role cancel, exact service-journal retries are
+  never rebuilt, and the unload adapter invokes the service plugin-unload
+  lifecycle for the saved module identity. Failure is explicit but cannot keep
+  the controller running or preserve a token.
 
-The portable broker/ABI, launch-only service policy, and add-on controller are
-implemented. Native QuickMenuReborn widgets remain blocked because the pinned
-public API has no runtime version query, and native service transport remains
-blocked because QuickMenuReborn documents no kernel bridge. SceShell hooks,
-Vita service syscalls/exports, concrete caller identity derivation,
-game-plugin injection, and presentation adapters remain unavailable; no
-firmware-offset fallback is permitted.
+The portable broker/ABI, launch-only service policy, add-on controller, and
+game claimant/open-authorization lifecycle are implemented. Native
+QuickMenuReborn widgets remain blocked because the pinned public API has no
+runtime version query, and native service transport remains blocked because
+QuickMenuReborn documents no kernel bridge. Public taiHEN lifecycle/hook APIs
+do not by themselves provide the required authoritative foreground, system
+overlay, and universal presentation facts. SceShell hooks, Vita service
+syscalls/exports, concrete caller identity derivation, native injection,
+renderer/menu hooks, pause integration, bounded memory access, and cleanup
+hardware gates remain unavailable; no firmware-offset fallback is permitted.
 
 ## Menu pause rules
 

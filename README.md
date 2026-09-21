@@ -101,12 +101,25 @@ The same portable milestone now also:
   only non-sensitive bounded status text; and
 - registers and unwinds texture, label, widget, callback, and worker tokens
   transactionally, retaining failed cleanup tokens for an explicit retry while
-  remaining stopped.
+  remaining stopped;
+- models the injected game-plugin claimant through a trusted, coherent identity,
+  overlay, presentation, clock, transport, and unload adapter contract;
+- discovers only its own pending request with attested game-role `STATUS`, then
+  emits only exact game-role `STATUS`, `CLAIM`, and `CANCEL` v1 envelopes;
+- requires a second sequenced closed-overlay observation and exact renderer
+  readiness for the same PID, process generation, module instance, title, and
+  controller lifecycle before and after claim transport;
+- converts one successful claim into a short-lived local menu-open
+  authorization that can be consumed and acknowledged once, and revokes it on
+  observation change, expiry, rollback, reset, stop, or unload; and
+- keeps claim success separate from menu open: this layer does not render,
+  pause threads, hook presentation, or grant memory access.
 
-The pause coordinator, launch broker, launch service, and launcher controller
-have no platform authority by themselves; process identity, foreground,
-copy/transport, UI, worker, clock, and cleanup operations are injected by
-future native adapters. No imported operation is executed in this milestone.
+The pause coordinator, launch broker, launch service, launcher controller, and
+game claimant have no platform authority by themselves; process identity,
+foreground, overlay, presentation, copy/transport, UI, worker, clock, and
+cleanup operations are injected by future native adapters. No imported
+operation is executed in this milestone.
 See
 [docs/legacy-psv-compatibility.md](docs/legacy-psv-compatibility.md).
 
@@ -167,9 +180,11 @@ plugin, input, rendering, watchdog, and cleanup paths remain runnable.
 The existing five-second Select state machine remains a tested self-test and
 recovery component, but is no longer the planned production launcher. A generic
 cross-title overlay is still unproven and will not be claimed until renderer
-hooks and cleanup pass hardware gates. The portable broker, byte ABI, service boundary, and add-on-side controller are
-implemented. A native QuickMenuReborn module, kernel/user adapters, injected
-plugin, and all Vita-native transport are not.
+hooks and cleanup pass hardware gates. The portable broker, byte ABI, service boundary, add-on-side controller, and
+injected-game claimant/open-authorization lifecycle are implemented. A native
+QuickMenuReborn module, verified kernel/user transport and injection adapters,
+renderer/menu implementation, pause integration, bounded memory service, and
+hardware cleanup gates are not.
 
 The online database will supply bounded declarative records, never executable
 scripts. The kernel service must expose a narrow versioned ABI and pass a
@@ -210,10 +225,13 @@ For bounded libFuzzer coverage, add `-DVITACHEAT_BUILD_FUZZERS=ON` and run
 `build-sanitize/vitacheat_search_fuzzer -runs=10000 -max_len=520` plus
 `build-sanitize/vitacheat_launch_broker_fuzzer -runs=10000 -max_len=512` and
 `build-sanitize/vitacheat_launch_service_fuzzer -runs=10000 -max_len=512` and
-`build-sanitize/vitacheat_quick_menu_launcher_fuzzer -runs=10000 -max_len=512`.
+`build-sanitize/vitacheat_quick_menu_launcher_fuzzer -runs=10000 -max_len=512`
+and
+`build-sanitize/vitacheat_launch_claimant_fuzzer -runs=10000 -max_len=512`.
 Dependency-free deterministic smoke targets are also available as
 `make launch-service-fuzz-smoke` and
-`make quick-menu-launcher-fuzz-smoke`.
+`make quick-menu-launcher-fuzz-smoke` and
+`make launch-claimant-fuzz-smoke`.
 
 VitaSDK is not required to build and run the host tests. Building the Vita
 self-test VPK does require VitaSDK.
@@ -278,6 +296,8 @@ listed only after their own gates pass.
   lifecycle, service statuses, and fixed-buffer front door.
 - `include/vitacheat/quick_menu_launcher.h` — allocation-free add-on lifecycle,
   UI/worker/transport adapter contract, and bounded public status model.
+- `include/vitacheat/launch_claimant.h` — allocation-free injected-game
+  identity/overlay/presentation claimant and one-shot open authorization.
 - `src/search.c` — portable little-endian implementation.
 - `src/legacy_psv.c` — syntax indexing and conservative operation mapping.
 - `src/menu_activation.c` — five-second one-shot activation logic.
@@ -287,6 +307,8 @@ listed only after their own gates pass.
   serialization, lifecycle synchronization, and copy-out result journal.
 - `src/quick_menu_launcher.c` — transactional resource lifecycle, one-slot
   callback handoff, exact submit/status dispatch, and snapshot revalidation.
+- `src/launch_claimant.c` — trusted observation gates, discovery/claim/cancel
+  worker, one-time authorization, and unload/stop cleanup.
 - `tests/host/test_search.c` — native behavioral and boundary tests.
 - `tests/host/test_legacy_psv.c` — mixed-format, truncation, and fail-closed
   importer tests.
@@ -299,11 +321,15 @@ listed only after their own gates pass.
 - `tests/host/test_quick_menu_launcher.c` — resource rollback, callback
   idempotence, snapshot races, response validation, status, and reentrancy
   tests.
+- `tests/host/test_launch_claimant.c` — overlay/presentation ordering, identity
+  churn, exact transport, authorization, cleanup, and bounded state tests.
 - `tests/fuzz/fuzz_launch_broker.c` — bounded codec/dispatch/lifecycle fuzzer.
 - `tests/fuzz/fuzz_launch_service.c` — bounded untrusted-byte, metadata, copy,
   and service-lifecycle fuzzer.
 - `tests/fuzz/fuzz_quick_menu_launcher.c` — bounded launcher lifecycle,
   foreground, response, and adapter-failure fuzzer.
+- `tests/fuzz/fuzz_launch_claimant.c` — bounded claimant lifecycle,
+  observation, transport, authorization, and time fuzzer.
 - `vita-self-test/` — ordinary user-mode on-device menu and owned-buffer probe.
 - `docs/architecture.md` — component boundaries and data flow.
 - `docs/legacy-psv-compatibility.md` — compatibility guarantees and limits.

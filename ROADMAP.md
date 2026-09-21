@@ -23,6 +23,9 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
 - [x] Allocation-free Quick Menu launcher controller with a one-slot deferred
       callback handoff, exact submit/status-only requests, trusted snapshot
       revalidation, bounded status, and transactional resource cleanup.
+- [x] Allocation-free injected-game launch claimant with trusted identity,
+      stable overlay-close and presentation gates, exact status/claim/cancel
+      transport, and one-time expiring local open authorization.
 - [x] Add sanitizer, fuzz, and property-based CI coverage.
 - [ ] Add snapshot/session file formats with strict version and size limits.
 
@@ -82,8 +85,11 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
 - [x] Host-test sending only a short-lived, generation-bound open request from
       the Quick Menu controller; never grant it read, pause, write, or freeze
       authority.
-- [ ] Let the matching injected game plugin claim the request after the system
-      overlay closes, then render the menu only after compatibility checks pass.
+- [x] Host-test the matching injected game-plugin claimant after a stable
+      system-overlay close and exact presentation compatibility check, emitting
+      one local open authorization without rendering or pausing.
+- [ ] Implement the native injected game plugin and renderer/menu owner that
+      consumes the portable claimant's authorization.
 - [ ] In the kernel adapter, build an explicit gameplay-thread allowlist that
       excludes the injected menu, input, renderer, watchdog, and cleanup paths.
 - [ ] Couple menu open/close to transactional pause/resume and refuse to open
@@ -153,9 +159,16 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
 - [x] Implement the portable add-on-side launcher controller and host-test
       resource registration/rollback, deferred work, status refresh, stale
       callback rejection, and malformed transport responses.
+- [x] Implement the portable game-side claimant/controller and host-test
+      attested discovery, stable overlay/presentation gating, one-shot
+      authorization, stale completion rejection, and stop/unload cleanup.
 - [ ] Resolve the missing public QuickMenuReborn runtime-version probe and
       implement an attested SceShell-to-kernel transport before adding the
       optional native `.suprx` target.
+- [ ] Pin and compile verified native user-plugin injection, authoritative
+      foreground/overlay observation, and per-renderer readiness adapters
+      before adding a claimant `.suprx`; public taiHEN lifecycle/hook APIs alone
+      do not provide those complete end-to-end facts.
 - [ ] Keep parsing, rendering, protocol handling, and database logic out of
       kernel context.
 - [ ] Validate process-generation binding, unload, title exit, suspend/resume,

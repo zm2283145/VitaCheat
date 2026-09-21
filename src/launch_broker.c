@@ -174,7 +174,8 @@ static vc_launch_status vc_launch_validate_operation_fields(
     case VC_LAUNCH_OPERATION_STATUS:
         required_role = request->caller_role;
         required_capability = VC_LAUNCH_CAPABILITY_STATUS;
-        if (request->request_id == 0 ||
+        if ((request->request_id == 0 &&
+             request->caller_role != VC_LAUNCH_CALLER_GAME_PLUGIN) ||
             request->ttl_ms != 0 ||
             request->presentation_ready != 0) {
             return VC_LAUNCH_STATUS_MALFORMED_FIELD;
@@ -929,7 +930,34 @@ vc_launch_status vc_launch_broker_status(vc_launch_broker *broker,
         broker, request, response, VC_LAUNCH_OPERATION_STATUS);
 
     if (status != VC_LAUNCH_STATUS_OK) {
+        if (request != NULL &&
+            request->request_id == 0 &&
+            request->caller_role ==
+                VC_LAUNCH_CALLER_GAME_PLUGIN) {
+            vc_launch_response_init(
+                response, VC_LAUNCH_OPERATION_STATUS,
+                request->now_ms, status);
+        }
         return status;
+    }
+    if (request->request_id == 0) {
+        if (broker->record.state != VC_LAUNCH_STATE_PENDING ||
+            broker->record.target_process_id !=
+                request->target_process_id ||
+            broker->record.target_generation !=
+                request->target_generation) {
+            response->status = VC_LAUNCH_STATUS_ABSENT;
+            return VC_LAUNCH_STATUS_ABSENT;
+        }
+        (void)vc_launch_advance_time(broker, request->now_ms, true);
+        if (broker->record.state != VC_LAUNCH_STATE_PENDING) {
+            response->status = VC_LAUNCH_STATUS_ABSENT;
+            return VC_LAUNCH_STATUS_ABSENT;
+        }
+        vc_launch_response_record(response, broker,
+                                  VC_LAUNCH_CAPABILITY_STATUS,
+                                  VC_LAUNCH_STATUS_PENDING);
+        return VC_LAUNCH_STATUS_PENDING;
     }
     status = vc_launch_match_record(broker, request);
     if (status >= VC_LAUNCH_STATUS_PENDING &&

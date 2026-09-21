@@ -478,6 +478,74 @@ static void test_absent_status(void)
     CHECK(response.request_id == 0);
 }
 
+static void test_game_status_discovery(void)
+{
+    vc_launch_broker broker;
+    vc_launch_request request;
+    vc_launch_response response;
+    uint64_t request_id;
+
+    prepare_broker(&broker, 17);
+    request_id = submit_request(&broker, 100, 100, &response);
+    CHECK(request_id == 17);
+
+    request = request_for(VC_LAUNCH_OPERATION_STATUS,
+                          VC_LAUNCH_CALLER_GAME_PLUGIN, 101);
+    request.request_id = 0;
+    CHECK(vc_launch_broker_status(&broker, &request, &response) ==
+          VC_LAUNCH_STATUS_PENDING);
+    CHECK(response.request_id == request_id);
+    CHECK(response.target_process_id == PID);
+    CHECK(response.target_generation == GENERATION);
+    CHECK(response.capabilities == VC_LAUNCH_CAPABILITY_STATUS);
+
+    request.caller_role = VC_LAUNCH_CALLER_SCE_SHELL;
+    CHECK(vc_launch_broker_status(&broker, &request, &response) ==
+          VC_LAUNCH_STATUS_MALFORMED_FIELD);
+
+    request.caller_role = VC_LAUNCH_CALLER_GAME_PLUGIN;
+    request.target_generation++;
+    CHECK(vc_launch_broker_status(&broker, &request, &response) ==
+          VC_LAUNCH_STATUS_ABSENT);
+    CHECK(response.request_id == 0);
+    CHECK(response.target_process_id == 0);
+
+    request.target_generation = GENERATION;
+    CHECK(claim_request(&broker, request_id, 102, true, &response) ==
+          VC_LAUNCH_STATUS_CLAIMED);
+    request.now_ms = 103;
+    CHECK(vc_launch_broker_status(&broker, &request, &response) ==
+          VC_LAUNCH_STATUS_ABSENT);
+    CHECK(response.request_id == 0);
+
+    prepare_broker(&broker, 23);
+    request_id = submit_request(&broker, 200, 1, &response);
+    request = request_for(VC_LAUNCH_OPERATION_STATUS,
+                          VC_LAUNCH_CALLER_GAME_PLUGIN, 201);
+    request.request_id = 0;
+    CHECK(vc_launch_broker_status(&broker, &request, &response) ==
+          VC_LAUNCH_STATUS_ABSENT);
+    CHECK(response.status == VC_LAUNCH_STATUS_ABSENT);
+    CHECK(response.launch_state == VC_LAUNCH_STATE_ABSENT);
+    CHECK(response.request_id == 0);
+    CHECK(response.target_process_id == 0);
+    CHECK(response.target_generation == 0);
+    CHECK(request_id == 23);
+
+    prepare_broker(&broker, 29);
+    (void)submit_request(&broker, 300, 100, &response);
+    request = request_for(VC_LAUNCH_OPERATION_STATUS,
+                          VC_LAUNCH_CALLER_GAME_PLUGIN, 299);
+    request.request_id = 0;
+    CHECK(vc_launch_broker_status(&broker, &request, &response) ==
+          VC_LAUNCH_STATUS_CLOCK_ROLLBACK);
+    CHECK(response.status == VC_LAUNCH_STATUS_CLOCK_ROLLBACK);
+    CHECK(response.launch_state == VC_LAUNCH_STATE_ABSENT);
+    CHECK(response.request_id == 0);
+    CHECK(response.target_process_id == 0);
+    CHECK(response.target_generation == 0);
+}
+
 static void check_unchanged(const vc_launch_broker *before,
                             const vc_launch_broker *after)
 {
@@ -908,6 +976,7 @@ int main(void)
     test_abi_rejections();
     test_happy_path_and_duplicate();
     test_absent_status();
+    test_game_status_discovery();
     test_wrong_authority_is_transactional();
     test_explicit_retarget_only();
     test_expiry_ttl_and_clock();

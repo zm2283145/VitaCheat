@@ -510,6 +510,51 @@ static void test_attestation_and_role_confusion(void)
     CHECK(operation_status == VC_LAUNCH_STATUS_PENDING);
 }
 
+static void test_attested_game_status_discovery(void)
+{
+    vc_launch_service service;
+    fake_platform platform;
+    vc_launch_request request;
+    vc_launch_response response;
+    vc_launch_status operation_status;
+    uint8_t request_wire[VC_LAUNCH_REQUEST_WIRE_SIZE];
+    uint8_t response_wire[VC_LAUNCH_RESPONSE_WIRE_SIZE];
+    uint64_t request_id;
+    size_t response_size;
+
+    prepare_service(&service, &platform, 90);
+    request_id = submit_success(&service, &platform, 100, 100);
+    request = request_for(
+        VC_LAUNCH_OPERATION_STATUS, VC_LAUNCH_CALLER_GAME_PLUGIN,
+        TARGET_PID, TARGET_GENERATION, 0, 101);
+    set_game_caller(&platform, TARGET_PID, TARGET_GENERATION);
+    CHECK(dispatch_request(&service, &request, request_wire,
+                           response_wire, 101, &response_size,
+                           &operation_status) ==
+          VC_LAUNCH_SERVICE_STATUS_OK);
+    CHECK(operation_status == VC_LAUNCH_STATUS_PENDING);
+    CHECK(vc_launch_response_decode(
+              response_wire, response_size, &response) ==
+          VC_LAUNCH_STATUS_OK);
+    CHECK(response.request_id == request_id);
+
+    set_shell_caller(&platform);
+    request.caller_role = VC_LAUNCH_CALLER_SCE_SHELL;
+    CHECK(dispatch_wire(&service, request_wire, sizeof(request_wire),
+                        response_wire, sizeof(response_wire), 101,
+                        &response_size, &operation_status) ==
+          VC_LAUNCH_SERVICE_STATUS_UNAUTHENTICATED_CALLER);
+
+    request = request_for(
+        VC_LAUNCH_OPERATION_STATUS, VC_LAUNCH_CALLER_GAME_PLUGIN,
+        TARGET_PID, TARGET_GENERATION, 0, 102);
+    set_game_caller(&platform, TARGET_PID + 1u, TARGET_GENERATION);
+    CHECK(dispatch_request(&service, &request, request_wire,
+                           response_wire, 102, &response_size,
+                           &operation_status) ==
+          VC_LAUNCH_SERVICE_STATUS_UNAUTHENTICATED_CALLER);
+}
+
 static void test_buffer_boundaries_and_copy_faults(void)
 {
     vc_launch_service service;
@@ -1078,6 +1123,7 @@ int main(void)
 {
     test_init_start_stop_and_cleanup();
     test_attestation_and_role_confusion();
+    test_attested_game_status_discovery();
     test_buffer_boundaries_and_copy_faults();
     test_copy_out_failure_policy();
     test_foreground_lifecycle_and_time();
