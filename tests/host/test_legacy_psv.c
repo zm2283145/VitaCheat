@@ -31,7 +31,7 @@ static void test_mixed_legacy_file_is_lossless_and_fail_closed(void)
         "_V1 Byte and word writes\n"
         "$0000 81000004 00000064\n"
         "$0100 81000006 00001234\r"
-        "$3200 81000008 0000008D\r\n"
+        "$6200 81000008 0000008D\r\n"
         "$broken code\r\n"
         "future-extension payload";
     vc_psv_line lines[16];
@@ -80,7 +80,7 @@ static void test_mixed_legacy_file_is_lossless_and_fail_closed(void)
     CHECK(operations[1].kind == VC_PSV_OPERATION_WRITE_U8);
     CHECK(operations[2].kind == VC_PSV_OPERATION_WRITE_U16);
     CHECK(operations[3].kind == VC_PSV_OPERATION_OPAQUE);
-    CHECK(operations[3].legacy_code == UINT16_C(0x3200));
+    CHECK(operations[3].legacy_code == UINT16_C(0x6200));
 }
 
 static void test_truncation_counts_without_guessing(void)
@@ -159,7 +159,7 @@ static void test_pcsa00133_module_relative_bolts(void)
 
     CHECK(vc_psv_parse(source, sizeof(source) - 1u, lines, 6, &cheat, 1,
                        operations, 2, &report) == VC_PSV_STATUS_OK);
-    CHECK(report.schema_version == UINT32_C(3));
+    CHECK(report.schema_version == UINT32_C(4));
     CHECK(report.total_cheats == 1);
     CHECK(report.total_operations == 2);
     CHECK(report.unsupported_operations == 0);

@@ -18,7 +18,7 @@ build identity, region, and ASLR placement.
 The portable core also owns two authority-free helpers:
 
 - a legacy `.psv` syntax indexer that holds views into caller-owned source,
-  plus a physical-record-safe compiler for documented non-pointer scalar
+  plus a physical-record-safe compiler for documented scalar and pointer
   families;
 - a callback-driven evaluator that stages concrete little-endian actions,
   followed by a separate bounded writer and reverse patch-ledger rollback;
@@ -28,10 +28,16 @@ The portable core also owns two authority-free helpers:
   callbacks, rolls back partial suspension in reverse order, binds cleanup to
   one process generation, and retains failed resumes for retry.
 
+Pointer plans store immutable starting-base expressions and an explicit bounded
+sequence of U32 read dependencies. A context-sensitive cursor owns complete
+multi-record spans before opcode dispatch, so terminal markers, pointer halves,
+and repeat-count records cannot become standalone operations. Repeats stay
+symbolic until bounded action materialization.
+
 None of these helpers reads controller hardware, enumerates or suspends threads,
-opens files, renders UI, or owns process memory. The scalar executor can invoke
-only callbacks supplied by an adapter; no Vita or real-process adapter exists
-in the portable layer.
+opens files, renders UI, or owns process memory. The evaluator can invoke only
+callbacks supplied by an adapter; no Vita or real-process adapter exists in the
+portable layer.
 
 The portable target contract is C11 plus an integer pointer type (`uintptr_t`)
 wide enough to represent object ranges. That holds for the supported Windows

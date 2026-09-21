@@ -13,6 +13,8 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
 - [x] Conservative typed mapping for documented direct 8/16/32-bit writes.
 - [x] Allocation-free scalar planning for MOV, repeat/compression, restorable
       ARM patches, button gates, and documented unsigned conditions.
+- [x] Allocation-free pointer-path planning for legacy write, repeat, and MOV
+      families with explicit read dependencies and bounded compatibility.
 - [x] Callback-only evaluation, symbolic expansion bounds, physical-record-safe
       skips, original-patch ledger, and retryable reverse rollback.
 - [x] Preserve unsupported legacy codes as opaque records without executing
@@ -35,8 +37,10 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
 - [ ] Save and resume search sessions.
 - [ ] Finalize the versioned declarative cheat schema beyond the current
       versioned import representation.
-- [ ] Implement pointer write/MOV/compression families 3, 8, and 7 through a
-      separate bounded layer; keep unknown codes opaque indefinitely.
+- [x] Implement pointer write/MOV/compression families 3, 8, and 7 through a
+      separate bounded planning/evaluation layer; keep unknown codes opaque.
+- [ ] Bind pointer plans to verified live-process readable and writable regions;
+      the current callback-only layer has no Vita memory authority.
 - [x] Import and independently validate z05/z06 `$B2MM` module-base selection,
       including corrected module/segment fields, overwrite/reset scope, and
       address snapshots. Real-process resolution remains a separate gate.

@@ -115,6 +115,15 @@ static vc_psv_operation_kind operation_kind(uint16_t code, uint32_t *flags)
         break;
     }
 
+    if ((code & UINT16_C(0xf000)) == UINT16_C(0x3000)) {
+        return VC_PSV_OPERATION_POINTER_WRITE;
+    }
+    if ((code & UINT16_C(0xf000)) == UINT16_C(0x7000)) {
+        return VC_PSV_OPERATION_POINTER_REPEAT;
+    }
+    if ((code & UINT16_C(0xf000)) == UINT16_C(0x8000)) {
+        return VC_PSV_OPERATION_POINTER_MOVE;
+    }
     if ((code & UINT16_C(0xff00)) == UINT16_C(0xb200)) {
         return VC_PSV_OPERATION_SELECT_MODULE_BASE;
     }
@@ -135,6 +144,9 @@ static bool operation_has_address(vc_psv_operation_kind kind)
            kind == VC_PSV_OPERATION_WRITE_U32 ||
            kind == VC_PSV_OPERATION_MOVE ||
            kind == VC_PSV_OPERATION_REPEAT ||
+           kind == VC_PSV_OPERATION_POINTER_WRITE ||
+           kind == VC_PSV_OPERATION_POINTER_REPEAT ||
+           kind == VC_PSV_OPERATION_POINTER_MOVE ||
            kind == VC_PSV_OPERATION_PATCH ||
            kind == VC_PSV_OPERATION_CONDITION_GATE;
 }
@@ -253,11 +265,13 @@ static void finalize_active_cheat(vc_psv_cheat *cheats,
                                   size_t cheat_capacity,
                                   size_t active_cheat,
                                   bool repeat_continuation_pending,
+                                  size_t pointer_records_remaining,
                                   bool *active_cheat_tainted,
                                   vc_psv_report *report)
 {
     if (active_cheat != VC_PSV_NO_INDEX &&
-        repeat_continuation_pending) {
+        (repeat_continuation_pending ||
+         pointer_records_remaining != 0)) {
         ++report->invalid_operation_sequences;
         taint_active_cheat(cheats, cheat_capacity, active_cheat,
                            VC_PSV_TRANSLATION_MALFORMED,
@@ -303,6 +317,7 @@ vc_psv_status vc_psv_parse(const char *source,
     bool active_cheat_tainted = false;
     bool relative_base_active = false;
     bool repeat_continuation_pending = false;
+    size_t pointer_records_remaining = 0;
     uint8_t relative_module_serial = 0;
     uint8_t relative_segment_index = 0;
     vc_psv_report result;
@@ -403,6 +418,7 @@ vc_psv_status vc_psv_parse(const char *source,
 
             finalize_active_cheat(cheats, cheat_capacity, active_cheat,
                                   repeat_continuation_pending,
+                                  pointer_records_remaining,
                                   &active_cheat_tainted, &result);
             if ((activation != '0' && activation != '1') ||
                 (description_begin < trimmed_end && !ascii_space(source[description_begin]))) {
@@ -418,6 +434,7 @@ vc_psv_status vc_psv_parse(const char *source,
                 active_cheat_tainted = false;
                 relative_base_active = false;
                 repeat_continuation_pending = false;
+                pointer_records_remaining = 0;
                 relative_module_serial = 0;
                 relative_segment_index = 0;
                 continue;
@@ -455,6 +472,7 @@ vc_psv_status vc_psv_parse(const char *source,
             active_cheat_tainted = false;
             relative_base_active = false;
             repeat_continuation_pending = false;
+            pointer_records_remaining = 0;
             relative_module_serial = 0;
             relative_segment_index = 0;
             continue;
@@ -472,9 +490,11 @@ vc_psv_status vc_psv_parse(const char *source,
             if (active_cheat == VC_PSV_NO_INDEX ||
                 !parse_code(source, trimmed_begin, trimmed_end, &code, &address,
                             &value, &flags)) {
-                if (repeat_continuation_pending) {
+                if (repeat_continuation_pending ||
+                    pointer_records_remaining != 0) {
                     ++result.invalid_operation_sequences;
                     repeat_continuation_pending = false;
+                    pointer_records_remaining = 0;
                 }
                 if (stored_line != NULL) {
                     stored_line->kind = VC_PSV_LINE_MALFORMED;
@@ -489,6 +509,9 @@ vc_psv_status vc_psv_parse(const char *source,
             if (repeat_continuation_pending) {
                 kind = VC_PSV_OPERATION_REPEAT_CONTINUATION;
                 repeat_continuation_pending = false;
+            } else if (pointer_records_remaining != 0) {
+                kind = VC_PSV_OPERATION_POINTER_POSITIONAL;
+                --pointer_records_remaining;
             } else {
                 kind = operation_kind(code, &flags);
             }
@@ -513,6 +536,19 @@ vc_psv_status vc_psv_parse(const char *source,
             }
             if (kind == VC_PSV_OPERATION_REPEAT) {
                 repeat_continuation_pending = true;
+            } else if (kind == VC_PSV_OPERATION_POINTER_WRITE) {
+                pointer_records_remaining =
+                    (size_t)(code & UINT16_C(0x000f));
+            } else if (kind == VC_PSV_OPERATION_POINTER_REPEAT) {
+                const size_t levels =
+                    (size_t)(code & UINT16_C(0x000f));
+                pointer_records_remaining =
+                    levels == 0 ? 0 : levels + 1u;
+            } else if (kind == VC_PSV_OPERATION_POINTER_MOVE) {
+                const size_t levels =
+                    (size_t)(code & UINT16_C(0x000f));
+                pointer_records_remaining =
+                    levels == 0 ? 0 : levels * 2u + 1u;
             }
             if (flags != VC_PSV_OPERATION_FLAG_NONE) {
                 ++result.compatibility_operations;
@@ -574,6 +610,7 @@ vc_psv_status vc_psv_parse(const char *source,
 
     finalize_active_cheat(cheats, cheat_capacity, active_cheat,
                           repeat_continuation_pending,
+                          pointer_records_remaining,
                           &active_cheat_tainted, &result);
     if (result.stored_lines != result.total_lines ||
         result.stored_cheats != result.total_cheats ||

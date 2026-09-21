@@ -239,7 +239,7 @@ static void test_b2_write_and_move(void)
     if (!parse_fixture(source, &fixture)) {
         return;
     }
-    CHECK(fixture.report.schema_version == UINT32_C(3));
+    CHECK(fixture.report.schema_version == UINT32_C(4));
     CHECK(compile_fixture(&fixture, 0, NULL, nodes, 2, &plan) ==
           VC_PSV_COMPILE_OK);
     CHECK(plan.node_count == 2);
@@ -974,7 +974,7 @@ static void test_compatibility_is_explicit_and_diagnostic(void)
     CHECK(node.width == VC_PSV_WIDTH_U8);
 }
 
-static void test_unknown_pointer_and_fallback_tokens_fail_closed(void)
+static void test_unknown_fallback_tokens_fail_closed(void)
 {
     static const char source[] =
         "_V0 Unknown records\n"
@@ -983,26 +983,23 @@ static void test_unknown_pointer_and_fallback_tokens_fail_closed(void)
         "$B000 00001000 00000001\n"
         "$C001 00001000 00000001\n"
         "$C007 00001000 00000001\n"
-        "$C101 00001000 00000001\n"
-        "$3000 00001000 00000001\n"
-        "$7000 00001000 00000001\n"
-        "$8000 00001000 00000001\n";
+        "$C101 00001000 00000001\n";
     parsed_fixture fixture;
-    vc_psv_plan_node nodes[9];
+    vc_psv_plan_node nodes[6];
     vc_psv_plan plan;
     size_t index;
 
     if (!parse_fixture(source, &fixture)) {
         return;
     }
-    CHECK(fixture.report.unsupported_operations == 9);
-    for (index = 0; index < 9; ++index) {
+    CHECK(fixture.report.unsupported_operations == 6);
+    for (index = 0; index < 6; ++index) {
         CHECK(fixture.operations[index].kind == VC_PSV_OPERATION_OPAQUE);
     }
     memset(nodes, 0xa5, sizeof(nodes));
-    CHECK(compile_fixture(&fixture, 0, NULL, nodes, 9, &plan) ==
+    CHECK(compile_fixture(&fixture, 0, NULL, nodes, 6, &plan) ==
           VC_PSV_COMPILE_UNSUPPORTED);
-    CHECK(memcmp(nodes, &(vc_psv_plan_node[9]){{0}}, sizeof(nodes)) == 0);
+    CHECK(memcmp(nodes, &(vc_psv_plan_node[6]){{0}}, sizeof(nodes)) == 0);
 }
 
 static void test_malformed_sequences_and_lexical_widths(void)
@@ -1188,7 +1185,7 @@ int main(void)
     test_unresolved_condition_is_false();
     test_staged_writes_feed_later_moves_and_conditions();
     test_compatibility_is_explicit_and_diagnostic();
-    test_unknown_pointer_and_fallback_tokens_fail_closed();
+    test_unknown_fallback_tokens_fail_closed();
     test_malformed_sequences_and_lexical_widths();
     test_validation_failure_has_no_callbacks();
     test_repeat_formula_property();

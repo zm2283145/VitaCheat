@@ -9,9 +9,11 @@ BUILD_DIR := build
 SEARCH_TEST_BIN := $(BUILD_DIR)/vitacheat_host_tests
 PSV_TEST_BIN := $(BUILD_DIR)/vitacheat_psv_tests
 LEGACY_PLAN_TEST_BIN := $(BUILD_DIR)/vitacheat_legacy_plan_tests
+LEGACY_POINTER_PLAN_TEST_BIN := $(BUILD_DIR)/vitacheat_legacy_pointer_plan_tests
 ACTIVATION_TEST_BIN := $(BUILD_DIR)/vitacheat_activation_tests
 PAUSE_TEST_BIN := $(BUILD_DIR)/vitacheat_pause_tests
 TEST_BINS := $(SEARCH_TEST_BIN) $(PSV_TEST_BIN) $(LEGACY_PLAN_TEST_BIN) \
+	$(LEGACY_POINTER_PLAN_TEST_BIN) \
 	$(ACTIVATION_TEST_BIN) $(PAUSE_TEST_BIN)
 CORE_SOURCES := src/search.c src/legacy_psv.c src/legacy_plan.c \
 	src/menu_activation.c src/pause.c
@@ -49,6 +51,9 @@ $(PSV_TEST_BIN): $(CORE_SOURCES) tests/host/test_legacy_psv.c $(HEADERS) | $(BUI
 $(LEGACY_PLAN_TEST_BIN): $(CORE_SOURCES) tests/host/test_legacy_plan.c $(HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(CORE_SOURCES) tests/host/test_legacy_plan.c -o $(LEGACY_PLAN_TEST_BIN)
 
+$(LEGACY_POINTER_PLAN_TEST_BIN): $(CORE_SOURCES) tests/host/test_legacy_pointer_plan.c $(HEADERS) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(CORE_SOURCES) tests/host/test_legacy_pointer_plan.c -o $(LEGACY_POINTER_PLAN_TEST_BIN)
+
 $(ACTIVATION_TEST_BIN): $(CORE_SOURCES) tests/host/test_menu_activation.c $(HEADERS) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(CORE_SOURCES) tests/host/test_menu_activation.c -o $(ACTIVATION_TEST_BIN)
 
@@ -59,6 +64,7 @@ test: $(TEST_BINS)
 	./$(SEARCH_TEST_BIN)
 	./$(PSV_TEST_BIN)
 	./$(LEGACY_PLAN_TEST_BIN)
+	./$(LEGACY_POINTER_PLAN_TEST_BIN)
 	./$(ACTIVATION_TEST_BIN)
 	./$(PAUSE_TEST_BIN)
 

@@ -7,7 +7,7 @@ online community database.
 
 This repository is an early scaffold. The current code is a portable,
 allocation-free memory snapshot search/refinement core, a lossless legacy
-VitaCheat `.psv` importer and scalar planner, a deterministic menu-activation
+VitaCheat `.psv` importer and bounded planner, a deterministic menu-activation
 state machine, plus a transactional gameplay-thread pause coordinator, all with
 host tests. A separate ordinary user-mode Vita self-test now exercises the scanner and
 five-second Select menu against memory owned by that test app. It is not a
@@ -53,17 +53,20 @@ The same portable milestone now also:
 - compiles direct writes, MOV, two-record repeat/compression, restorable ARM
   patches, button gates, and all documented unsigned condition relations into
   typed allocation-free plans;
+- compiles legacy pointer write (`3`), pointer repeat/compression (`7`), and
+  pointer MOV (`8`) spans into immutable pointer paths with explicit U32 read
+  dependencies, bounded levels, symbolic repeat expansion, and positional
+  record ownership;
 - interprets z06 `$B2MM SSSSSSSS 00000000` correctly, snapshots module/segment
   state onto every address-bearing node, and permits bounded mid-descriptor
   selector overwrite;
-- validates physical-record gate targets so a skip cannot expose a repeat
-  continuation as a top-level record;
+- validates physical-record gate targets so a skip cannot expose any scalar or
+  pointer continuation, terminal marker, MOV half, or repeat count as a
+  top-level record;
 - evaluates plans through bounded module-resolution, byte-read, and normalized
   button callbacks before applying concrete actions through a separate write
   callback;
 - captures original patch bytes and exposes reverse-order, retryable rollback;
-- keeps pointer families 3, 8, and 7 opaque and rejects their complete
-  descriptor rather than exposing later scalar records;
 - preserves every other syntactically valid code as opaque data instead of
   guessing its meaning;
 - reports malformed records, truncation, and legacy format-limit violations;
@@ -78,7 +81,7 @@ The same portable milestone now also:
 - rejects stale process generations and forces cleanup after a bounded menu
   deadline or monotonic-clock rollback.
 
-Neither the pause coordinator nor scalar planner has process authority by
+Neither the pause coordinator nor legacy planner has process authority by
 itself, and no real-process memory adapter ships in this milestone. See
 [docs/legacy-psv-compatibility.md](docs/legacy-psv-compatibility.md).
 
@@ -225,7 +228,8 @@ listed only after their own gates pass.
 
 - `include/vitacheat/search.h` — public bounded search/refinement API.
 - `include/vitacheat/legacy_psv.h` — bounded lossless legacy importer API.
-- `include/vitacheat/legacy_plan.h` — typed scalar compile/evaluate/apply API.
+- `include/vitacheat/legacy_plan.h` — typed scalar and pointer
+  compile/evaluate/apply API.
 - `include/vitacheat/menu_activation.h` — portable Select-hold state machine.
 - `include/vitacheat/pause.h` — bounded pause ownership and cleanup contract.
 - `src/search.c` — portable little-endian implementation.
@@ -238,6 +242,8 @@ listed only after their own gates pass.
   importer tests.
 - `tests/host/test_legacy_plan.c` — scalar semantics, gates, bounds, and
   restoration tests.
+- `tests/host/test_legacy_pointer_plan.c` — pointer spans, traversal,
+  compatibility, gates, bounds, and failure-atomicity tests.
 - `tests/host/test_menu_activation.c` — hold, release, and clock-reset tests.
 - `tests/host/test_pause.c` — pause ownership, rollback, retry, and expiry tests.
 - `vita-self-test/` — ordinary user-mode on-device menu and owned-buffer probe.

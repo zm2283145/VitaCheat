@@ -10,14 +10,18 @@ The current library cannot access a process, file, socket, or kernel API. It
 only searches byte arrays supplied by its caller. Output storage is also
 caller-owned and capacity bounded.
 
-The legacy `.psv` importer likewise only indexes caller-owned bytes. Its scalar
-compiler rejects a complete descriptor on unknown pointer/extension records,
-malformed multi-record spans, unsafe gate targets, or unapproved compatibility
-syntax. Evaluation can resolve bases, read up to four bytes, and sample a
-normalized button mask only through bounded callbacks; it performs no writes.
-Applying an evaluated plan requires a separate byte-write callback, and
-restorable patches retain original bytes in a caller-owned retryable ledger.
-No real-process implementation of those callbacks ships in this layer.
+The legacy `.psv` importer likewise only indexes caller-owned bytes. Its
+compiler rejects a complete descriptor on unknown records, malformed scalar or
+pointer spans, unsafe gate targets, unbounded expansion, or unapproved
+compatibility syntax. Pointer traversal is represented by immutable,
+maximum-eight-level paths with explicit U32 read dependencies. Evaluation can
+resolve bases, read up to four bytes at each bounded dependency, and sample a
+normalized button mask only through callbacks; it performs no writes. Any
+failed validation, base resolution, pointer read, or source read clears all
+staged actions. Applying a successfully evaluated plan requires a separate
+byte-write callback, and restorable patches retain original bytes in a
+caller-owned retryable ledger. No real-process implementation of those
+callbacks ships in this layer.
 
 The five-second Select helper consumes only a button state and timestamp; it
 grants no memory capability by itself. The portable pause coordinator calls

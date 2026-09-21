@@ -98,7 +98,11 @@ static bool valid_compile_compatibility(uint32_t compatibility)
 {
     const uint32_t known = VC_PSV_COMPILE_ALLOW_INLINE_COMMENTS |
                            VC_PSV_COMPILE_ALLOW_NONCANONICAL_REPEAT |
-                           VC_PSV_COMPILE_ALLOW_PATCH_U8;
+                           VC_PSV_COMPILE_ALLOW_PATCH_U8 |
+                           VC_PSV_COMPILE_ALLOW_POINTER_LEVELS_6_8 |
+                           VC_PSV_COMPILE_ALLOW_POINTER_TERMINAL_MARKERS |
+                           VC_PSV_COMPILE_ALLOW_POINTER_U32_GAP |
+                           VC_PSV_COMPILE_ALLOW_POINTER_MOV_MISMATCH;
     return (compatibility & ~known) == 0;
 }
 
@@ -141,7 +145,14 @@ static bool operation_shape_is_valid(const vc_psv_operation *operation)
     case VC_PSV_OPERATION_REPEAT:
         return is_canonical_repeat(code) || is_compatible_repeat(code);
     case VC_PSV_OPERATION_REPEAT_CONTINUATION:
+    case VC_PSV_OPERATION_POINTER_POSITIONAL:
         return true;
+    case VC_PSV_OPERATION_POINTER_WRITE:
+        return (code & UINT16_C(0xf000)) == UINT16_C(0x3000);
+    case VC_PSV_OPERATION_POINTER_REPEAT:
+        return (code & UINT16_C(0xf000)) == UINT16_C(0x7000);
+    case VC_PSV_OPERATION_POINTER_MOVE:
+        return (code & UINT16_C(0xf000)) == UINT16_C(0x8000);
     case VC_PSV_OPERATION_PATCH:
         return code == UINT16_C(0xa000) ||
                code == UINT16_C(0xa100) ||
@@ -240,6 +251,9 @@ static bool is_address_operation(vc_psv_operation_kind kind)
            kind == VC_PSV_OPERATION_WRITE_U32 ||
            kind == VC_PSV_OPERATION_MOVE ||
            kind == VC_PSV_OPERATION_REPEAT ||
+           kind == VC_PSV_OPERATION_POINTER_WRITE ||
+           kind == VC_PSV_OPERATION_POINTER_REPEAT ||
+           kind == VC_PSV_OPERATION_POINTER_MOVE ||
            kind == VC_PSV_OPERATION_PATCH ||
            kind == VC_PSV_OPERATION_CONDITION_GATE;
 }
@@ -253,6 +267,44 @@ static bool button_mode_is_valid(uint32_t mode)
            mode == UINT32_C(8);
 }
 
+static bool operation_physical_span(const vc_psv_operation *operation,
+                                    size_t remaining,
+                                    size_t *span)
+{
+    size_t levels;
+
+    switch (operation->kind) {
+    case VC_PSV_OPERATION_REPEAT:
+        *span = 2;
+        break;
+    case VC_PSV_OPERATION_POINTER_WRITE:
+        levels = (size_t)(operation->legacy_code & UINT16_C(0x000f));
+        if (levels == 0) {
+            return false;
+        }
+        *span = levels + 1u;
+        break;
+    case VC_PSV_OPERATION_POINTER_REPEAT:
+        levels = (size_t)(operation->legacy_code & UINT16_C(0x000f));
+        if (levels == 0) {
+            return false;
+        }
+        *span = levels + 2u;
+        break;
+    case VC_PSV_OPERATION_POINTER_MOVE:
+        levels = (size_t)(operation->legacy_code & UINT16_C(0x000f));
+        if (levels == 0) {
+            return false;
+        }
+        *span = (levels + 1u) * 2u;
+        break;
+    default:
+        *span = 1;
+        break;
+    }
+    return *span <= remaining;
+}
+
 static bool gate_target_is_valid(const vc_psv_operation *operations,
                                  size_t first,
                                  size_t physical_count,
@@ -260,17 +312,112 @@ static bool gate_target_is_valid(const vc_psv_operation *operations,
                                  uint8_t skip_records)
 {
     size_t target;
+    size_t cursor = 0;
 
     if (!add_size(index, (size_t)skip_records + 1u, &target) ||
         target > physical_count) {
         return false;
     }
-    if (target < physical_count &&
-        operations[first + target].kind ==
-            VC_PSV_OPERATION_REPEAT_CONTINUATION) {
-        return false;
+    while (cursor < physical_count) {
+        size_t span;
+
+        if (!operation_physical_span(&operations[first + cursor],
+                                     physical_count - cursor, &span)) {
+            return false;
+        }
+        if (target > cursor && target < cursor + span) {
+            return false;
+        }
+        cursor += span;
     }
     return true;
+}
+
+static vc_psv_compile_status accept_positional_record(
+    const vc_psv_operation *operation,
+    uint32_t compatibility,
+    vc_psv_plan_node *node,
+    vc_psv_plan *plan)
+{
+    const uint32_t required = required_compatibility(operation->flags);
+
+    if (operation->kind != VC_PSV_OPERATION_POINTER_POSITIONAL ||
+        operation->address_mode != VC_PSV_ADDRESS_NOT_APPLICABLE ||
+        operation->module_serial != 0 ||
+        operation->segment_index != 0 ||
+        !valid_operation_flags(operation->flags) ||
+        !operation_flags_match_shape(operation)) {
+        return VC_PSV_COMPILE_MALFORMED;
+    }
+    if ((required & ~compatibility) != 0) {
+        return VC_PSV_COMPILE_NONCANONICAL;
+    }
+    if (required != 0) {
+        ++plan->compatibility_diagnostics;
+    }
+    node->flags |= operation->flags;
+    return VC_PSV_COMPILE_OK;
+}
+
+static vc_psv_compile_status accept_pointer_level(
+    size_t levels,
+    uint32_t compatibility,
+    vc_psv_plan_node *node,
+    vc_psv_plan *plan)
+{
+    if (levels == 0 || levels > VC_PSV_POINTER_MAX_LEVELS) {
+        return VC_PSV_COMPILE_MALFORMED;
+    }
+    if (levels > VC_PSV_POINTER_CANONICAL_MAX_LEVELS) {
+        if ((compatibility &
+             VC_PSV_COMPILE_ALLOW_POINTER_LEVELS_6_8) == 0) {
+            return VC_PSV_COMPILE_NONCANONICAL;
+        }
+        node->diagnostics |= VC_PSV_PLAN_DIAGNOSTIC_POINTER_LEVEL;
+        ++plan->compatibility_diagnostics;
+    }
+    return VC_PSV_COMPILE_OK;
+}
+
+static vc_psv_compile_status build_pointer_path(
+    const vc_psv_operation *operations,
+    size_t root_index,
+    size_t levels,
+    uint16_t continuation_code,
+    bool relative,
+    uint8_t module_serial,
+    uint8_t segment_index,
+    uint32_t compatibility,
+    vc_psv_plan_node *node,
+    vc_psv_plan *plan,
+    vc_psv_pointer_path *path)
+{
+    size_t level;
+
+    memset(path, 0, sizeof(*path));
+    path->base = make_address(operations[root_index].address, relative,
+                              module_serial, segment_index);
+    path->level_count = (uint8_t)levels;
+    path->reads[0].width = VC_PSV_WIDTH_U32;
+    path->reads[0].offset = operations[root_index].value;
+    for (level = 1; level < levels; ++level) {
+        const vc_psv_operation *continuation =
+            &operations[root_index + level];
+        const vc_psv_compile_status status =
+            accept_positional_record(continuation, compatibility,
+                                     node, plan);
+
+        if (status != VC_PSV_COMPILE_OK) {
+            return status;
+        }
+        if (continuation->legacy_code != continuation_code ||
+            continuation->address != UINT32_C(0)) {
+            return VC_PSV_COMPILE_MALFORMED;
+        }
+        path->reads[level].width = VC_PSV_WIDTH_U32;
+        path->reads[level].offset = continuation->value;
+    }
+    return VC_PSV_COMPILE_OK;
 }
 
 static void clear_nodes(vc_psv_plan_node *nodes, size_t node_capacity)
@@ -339,18 +486,12 @@ vc_psv_compile_status vc_psv_compile_cheat(
         *plan = result;
         return VC_PSV_COMPILE_MALFORMED;
     }
-    if (cheat->translation_state ==
-        VC_PSV_TRANSLATION_REQUIRES_UNSUPPORTED) {
-        clear_nodes(nodes, node_capacity);
-        *plan = result;
-        return VC_PSV_COMPILE_UNSUPPORTED;
-    }
-
     while (cheat->first_operation_index + index < operation_end) {
         const vc_psv_operation *operation =
             &operations[cheat->first_operation_index + index];
         vc_psv_plan_node node;
         size_t action_increment = 0;
+        size_t read_increment = 0;
         size_t physical_advance = 1;
         const uint32_t required =
             required_compatibility(operation->flags);
@@ -373,7 +514,8 @@ vc_psv_compile_status vc_psv_compile_cheat(
             status = VC_PSV_COMPILE_UNSUPPORTED;
             break;
         }
-        if (operation->kind == VC_PSV_OPERATION_REPEAT_CONTINUATION) {
+        if (operation->kind == VC_PSV_OPERATION_REPEAT_CONTINUATION ||
+            operation->kind == VC_PSV_OPERATION_POINTER_POSITIONAL) {
             status = VC_PSV_COMPILE_MALFORMED;
             break;
         }
@@ -432,6 +574,7 @@ vc_psv_compile_status vc_psv_compile_cheat(
                 make_address(operation->value, relative, module_serial,
                              segment_index);
             action_increment = 1;
+            read_increment = 1;
             break;
         case VC_PSV_OPERATION_REPEAT: {
             const vc_psv_operation *continuation;
@@ -477,6 +620,335 @@ vc_psv_compile_status vc_psv_compile_cheat(
             physical_advance = 2;
             break;
         }
+        case VC_PSV_OPERATION_POINTER_WRITE: {
+            const size_t levels =
+                (size_t)(operation->legacy_code & UINT16_C(0x000f));
+            const uint16_t width_index =
+                (uint16_t)((operation->legacy_code >> 8u) &
+                           UINT16_C(0x000f));
+            const uint16_t continuation_code =
+                (uint16_t)(UINT16_C(0x3000) |
+                           (uint16_t)(width_index << 8u));
+            const vc_psv_operation *terminal;
+
+            if ((operation->legacy_code & UINT16_C(0x00f0)) != 0 ||
+                width_index > UINT16_C(2)) {
+                status = VC_PSV_COMPILE_MALFORMED;
+                break;
+            }
+            status = accept_pointer_level(levels, compatibility,
+                                          &node, &result);
+            if (status != VC_PSV_COMPILE_OK) {
+                break;
+            }
+            if (levels + 1u > cheat->operation_count - index) {
+                status = VC_PSV_COMPILE_MALFORMED;
+                break;
+            }
+            status = build_pointer_path(
+                operations, cheat->first_operation_index + index,
+                levels, continuation_code, relative, module_serial,
+                segment_index, compatibility, &node, &result,
+                &node.destination_pointer);
+            if (status != VC_PSV_COMPILE_OK) {
+                break;
+            }
+            terminal =
+                &operations[cheat->first_operation_index + index + levels];
+            status = accept_positional_record(
+                terminal, compatibility, &node, &result);
+            if (status != VC_PSV_COMPILE_OK) {
+                break;
+            }
+            if (terminal->address != UINT32_C(0)) {
+                status = VC_PSV_COMPILE_MALFORMED;
+                break;
+            }
+            if (terminal->legacy_code != UINT16_C(0x3300)) {
+                if ((terminal->legacy_code != UINT16_C(0x3302) &&
+                     terminal->legacy_code != UINT16_C(0x9000)) ||
+                    (compatibility &
+                     VC_PSV_COMPILE_ALLOW_POINTER_TERMINAL_MARKERS) == 0) {
+                    status =
+                        terminal->legacy_code == UINT16_C(0x3302) ||
+                                terminal->legacy_code == UINT16_C(0x9000)
+                            ? VC_PSV_COMPILE_NONCANONICAL
+                            : VC_PSV_COMPILE_MALFORMED;
+                    break;
+                }
+                node.diagnostics |=
+                    VC_PSV_PLAN_DIAGNOSTIC_POINTER_TERMINAL_MARKER;
+                ++result.compatibility_diagnostics;
+            }
+            node.kind = VC_PSV_PLAN_POINTER_WRITE;
+            node.width = width_from_index(width_index);
+            node.value = terminal->value;
+            node.physical_count = levels + 1u;
+            action_increment = 1;
+            read_increment = levels;
+            physical_advance = node.physical_count;
+            break;
+        }
+        case VC_PSV_OPERATION_POINTER_REPEAT: {
+            const size_t levels =
+                (size_t)(operation->legacy_code & UINT16_C(0x000f));
+            const uint16_t width_index =
+                (uint16_t)((operation->legacy_code >> 8u) &
+                           UINT16_C(0x000f));
+            const uint16_t continuation_code =
+                (uint16_t)(UINT16_C(0x7000) |
+                           (uint16_t)(width_index << 8u));
+            const vc_psv_operation *marker;
+            const vc_psv_operation *count;
+            uint16_t selector;
+
+            if ((operation->legacy_code & UINT16_C(0x00f0)) != 0 ||
+                width_index > UINT16_C(2)) {
+                status = VC_PSV_COMPILE_MALFORMED;
+                break;
+            }
+            status = accept_pointer_level(levels, compatibility,
+                                          &node, &result);
+            if (status != VC_PSV_COMPILE_OK) {
+                break;
+            }
+            if (levels + 2u > cheat->operation_count - index) {
+                status = VC_PSV_COMPILE_MALFORMED;
+                break;
+            }
+            status = build_pointer_path(
+                operations, cheat->first_operation_index + index,
+                levels, continuation_code, relative, module_serial,
+                segment_index, compatibility, &node, &result,
+                &node.destination_pointer);
+            if (status != VC_PSV_COMPILE_OK) {
+                break;
+            }
+            marker =
+                &operations[cheat->first_operation_index + index + levels];
+            status = accept_positional_record(
+                marker, compatibility, &node, &result);
+            if (status != VC_PSV_COMPILE_OK) {
+                break;
+            }
+            if (marker->address != UINT32_C(0)) {
+                status = VC_PSV_COMPILE_MALFORMED;
+                break;
+            }
+            if ((marker->legacy_code & UINT16_C(0xff00)) ==
+                UINT16_C(0x7700)) {
+                selector =
+                    (uint16_t)(marker->legacy_code & UINT16_C(0x00ff));
+            } else if (marker->legacy_code == UINT16_C(0x7402)) {
+                if ((compatibility &
+                     VC_PSV_COMPILE_ALLOW_POINTER_TERMINAL_MARKERS) == 0) {
+                    status = VC_PSV_COMPILE_NONCANONICAL;
+                    break;
+                }
+                selector = UINT16_C(2);
+                node.diagnostics |=
+                    VC_PSV_PLAN_DIAGNOSTIC_POINTER_REPEAT_MARKER;
+                ++result.compatibility_diagnostics;
+            } else {
+                status = VC_PSV_COMPILE_MALFORMED;
+                break;
+            }
+            if ((size_t)selector > levels) {
+                status = VC_PSV_COMPILE_MALFORMED;
+                break;
+            }
+            count = &operations[cheat->first_operation_index + index +
+                                levels + 1u];
+            status = accept_positional_record(
+                count, compatibility, &node, &result);
+            if (status != VC_PSV_COMPILE_OK) {
+                break;
+            }
+            if (count->address > UINT32_C(0xffff)) {
+                if ((compatibility &
+                     VC_PSV_COMPILE_ALLOW_POINTER_U32_GAP) == 0) {
+                    status = VC_PSV_COMPILE_NONCANONICAL;
+                    break;
+                }
+                node.diagnostics |=
+                    VC_PSV_PLAN_DIAGNOSTIC_POINTER_U32_GAP;
+                ++result.compatibility_diagnostics;
+            }
+            node.kind = VC_PSV_PLAN_POINTER_REPEAT;
+            node.width = width_from_index(width_index);
+            node.value = marker->value;
+            node.repeat_count = count->legacy_code;
+            node.address_gap = count->address;
+            node.value_increment = count->value;
+            node.pointer_increment_selector = (uint8_t)selector;
+            node.physical_count = levels + 2u;
+            action_increment = (size_t)node.repeat_count;
+            if (!multiply_size(action_increment, levels,
+                               &read_increment)) {
+                status = VC_PSV_COMPILE_ACTION_LIMIT;
+                break;
+            }
+            physical_advance = node.physical_count;
+            break;
+        }
+        case VC_PSV_OPERATION_POINTER_MOVE: {
+            const size_t levels =
+                (size_t)(operation->legacy_code & UINT16_C(0x000f));
+            const uint16_t width_index =
+                (uint16_t)((operation->legacy_code >> 8u) &
+                           UINT16_C(0x000f));
+            const uint16_t destination_continuation =
+                (uint16_t)(UINT16_C(0x8000) |
+                           (uint16_t)(width_index << 8u));
+            const vc_psv_operation *destination_marker;
+            const vc_psv_operation *source_root;
+            const vc_psv_operation *source_marker;
+            size_t source_levels;
+            uint16_t source_width_index;
+            uint16_t source_continuation;
+
+            if ((operation->legacy_code & UINT16_C(0x00f0)) != 0 ||
+                width_index > UINT16_C(2)) {
+                status = VC_PSV_COMPILE_MALFORMED;
+                break;
+            }
+            status = accept_pointer_level(levels, compatibility,
+                                          &node, &result);
+            if (status != VC_PSV_COMPILE_OK) {
+                break;
+            }
+            if ((levels + 1u) * 2u >
+                cheat->operation_count - index) {
+                status = VC_PSV_COMPILE_MALFORMED;
+                break;
+            }
+            status = build_pointer_path(
+                operations, cheat->first_operation_index + index,
+                levels, destination_continuation, relative,
+                module_serial, segment_index, compatibility, &node,
+                &result, &node.destination_pointer);
+            if (status != VC_PSV_COMPILE_OK) {
+                break;
+            }
+            destination_marker =
+                &operations[cheat->first_operation_index + index + levels];
+            status = accept_positional_record(
+                destination_marker, compatibility, &node, &result);
+            if (status != VC_PSV_COMPILE_OK) {
+                break;
+            }
+            source_root =
+                &operations[cheat->first_operation_index + index +
+                            levels + 1u];
+            status = accept_positional_record(
+                source_root, compatibility, &node, &result);
+            if (status != VC_PSV_COMPILE_OK) {
+                break;
+            }
+            source_width_index =
+                (uint16_t)((source_root->legacy_code >> 8u) &
+                           UINT16_C(0x000f));
+            source_levels =
+                (size_t)(source_root->legacy_code & UINT16_C(0x000f));
+            if ((source_root->legacy_code & UINT16_C(0xf0f0)) !=
+                    UINT16_C(0x8000) ||
+                source_width_index < UINT16_C(4) ||
+                source_width_index > UINT16_C(6) ||
+                source_levels == 0 ||
+                source_levels > VC_PSV_POINTER_MAX_LEVELS) {
+                status = VC_PSV_COMPILE_MALFORMED;
+                break;
+            }
+            if (source_width_index != width_index + UINT16_C(4)) {
+                if ((compatibility &
+                     VC_PSV_COMPILE_ALLOW_POINTER_MOV_MISMATCH) == 0) {
+                    status = VC_PSV_COMPILE_NONCANONICAL;
+                    break;
+                }
+                node.diagnostics |=
+                    VC_PSV_PLAN_DIAGNOSTIC_POINTER_MOV_WIDTH;
+                ++result.compatibility_diagnostics;
+            }
+            if (source_levels != levels) {
+                if ((compatibility &
+                     VC_PSV_COMPILE_ALLOW_POINTER_MOV_MISMATCH) == 0) {
+                    status = VC_PSV_COMPILE_NONCANONICAL;
+                    break;
+                }
+                node.diagnostics |=
+                    VC_PSV_PLAN_DIAGNOSTIC_POINTER_MOV_LEVEL;
+                ++result.compatibility_diagnostics;
+            }
+            if (destination_marker->address != UINT32_C(0) ||
+                destination_marker->value != UINT32_C(0)) {
+                status = VC_PSV_COMPILE_MALFORMED;
+                break;
+            }
+            if (destination_marker->legacy_code != UINT16_C(0x8800)) {
+                if (destination_marker->legacy_code != UINT16_C(0x8900) ||
+                    (compatibility &
+                     VC_PSV_COMPILE_ALLOW_POINTER_MOV_MISMATCH) == 0) {
+                    status =
+                        destination_marker->legacy_code ==
+                                UINT16_C(0x8900)
+                            ? VC_PSV_COMPILE_NONCANONICAL
+                            : VC_PSV_COMPILE_MALFORMED;
+                    break;
+                }
+                node.diagnostics |=
+                    VC_PSV_PLAN_DIAGNOSTIC_POINTER_MOV_MARKER;
+                ++result.compatibility_diagnostics;
+            }
+            source_continuation =
+                (uint16_t)(UINT16_C(0x8000) |
+                           (uint16_t)(source_width_index << 8u));
+            status = build_pointer_path(
+                operations,
+                cheat->first_operation_index + index + levels + 1u,
+                levels, source_continuation, relative, module_serial,
+                segment_index, compatibility, &node, &result,
+                &node.source_pointer);
+            if (status != VC_PSV_COMPILE_OK) {
+                break;
+            }
+            source_marker =
+                &operations[cheat->first_operation_index + index +
+                            levels * 2u + 1u];
+            status = accept_positional_record(
+                source_marker, compatibility, &node, &result);
+            if (status != VC_PSV_COMPILE_OK) {
+                break;
+            }
+            if (source_marker->address != UINT32_C(0) ||
+                source_marker->value != UINT32_C(0)) {
+                status = VC_PSV_COMPILE_MALFORMED;
+                break;
+            }
+            if (source_marker->legacy_code != UINT16_C(0x8900)) {
+                if (source_marker->legacy_code != UINT16_C(0x8800) ||
+                    (compatibility &
+                     VC_PSV_COMPILE_ALLOW_POINTER_MOV_MISMATCH) == 0) {
+                    status =
+                        source_marker->legacy_code == UINT16_C(0x8800)
+                            ? VC_PSV_COMPILE_NONCANONICAL
+                            : VC_PSV_COMPILE_MALFORMED;
+                    break;
+                }
+                node.diagnostics |=
+                    VC_PSV_PLAN_DIAGNOSTIC_POINTER_MOV_MARKER;
+                ++result.compatibility_diagnostics;
+            }
+            node.kind = VC_PSV_PLAN_POINTER_MOVE;
+            node.width = width_from_index(width_index);
+            node.observed_source_width_index =
+                (uint8_t)source_width_index;
+            node.observed_source_level_count = (uint8_t)source_levels;
+            node.physical_count = (levels + 1u) * 2u;
+            action_increment = 1;
+            read_increment = levels * 2u + 1u;
+            physical_advance = node.physical_count;
+            break;
+        }
         case VC_PSV_OPERATION_PATCH:
             node.kind = VC_PSV_PLAN_PATCH;
             node.destination =
@@ -484,6 +956,7 @@ vc_psv_compile_status vc_psv_compile_cheat(
                              segment_index);
             node.value = operation->value;
             action_increment = 1;
+            read_increment = 1;
             break;
         case VC_PSV_OPERATION_BUTTON_GATE:
             if ((operation->address & UINT32_C(0xffff0000)) != 0 ||
@@ -524,6 +997,7 @@ vc_psv_compile_status vc_psv_compile_cheat(
             node.value = operation->value;
             node.skip_records =
                 (uint8_t)(operation->legacy_code & UINT16_C(0x00ff));
+            read_increment = 1;
             break;
         }
         default:
@@ -536,6 +1010,12 @@ vc_psv_compile_status vc_psv_compile_cheat(
         if (!add_size(result.maximum_actions, action_increment,
                       &result.maximum_actions) ||
             result.maximum_actions > action_limit) {
+            status = VC_PSV_COMPILE_ACTION_LIMIT;
+            break;
+        }
+        if (!add_size(result.maximum_memory_reads, read_increment,
+                      &result.maximum_memory_reads) ||
+            result.maximum_memory_reads > VC_PSV_MAX_READ_LIMIT) {
             status = VC_PSV_COMPILE_ACTION_LIMIT;
             break;
         }
@@ -603,6 +1083,48 @@ static bool valid_plan_address(const vc_psv_plan_address *address)
            address->segment_index <= 1;
 }
 
+static bool valid_pointer_path(const vc_psv_pointer_path *path)
+{
+    size_t index;
+
+    if (!valid_plan_address(&path->base) ||
+        path->level_count == 0 ||
+        path->level_count > VC_PSV_POINTER_MAX_LEVELS) {
+        return false;
+    }
+    for (index = 0; index < VC_PSV_POINTER_MAX_LEVELS; ++index) {
+        if (index < path->level_count) {
+            if (path->reads[index].width != VC_PSV_WIDTH_U32) {
+                return false;
+            }
+        } else if (path->reads[index].width != 0 ||
+                   path->reads[index].offset != UINT32_C(0)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool pointer_path_is_zero(const vc_psv_pointer_path *path)
+{
+    size_t index;
+
+    if (path->base.mode != VC_PSV_ADDRESS_NOT_APPLICABLE ||
+        path->base.value != UINT32_C(0) ||
+        path->base.module_serial != 0 ||
+        path->base.segment_index != 0 ||
+        path->level_count != 0) {
+        return false;
+    }
+    for (index = 0; index < VC_PSV_POINTER_MAX_LEVELS; ++index) {
+        if (path->reads[index].width != 0 ||
+            path->reads[index].offset != UINT32_C(0)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static bool node_has_destination(vc_psv_plan_node_kind kind)
 {
     return kind == VC_PSV_PLAN_WRITE ||
@@ -612,15 +1134,21 @@ static bool node_has_destination(vc_psv_plan_node_kind kind)
            kind == VC_PSV_PLAN_CONDITION_GATE;
 }
 
-static bool target_splits_repeat(const vc_psv_plan_node *nodes,
-                                 size_t node_count,
-                                 size_t target)
+static bool target_splits_multiline(const vc_psv_plan_node *nodes,
+                                    size_t node_count,
+                                    size_t target)
 {
     size_t index;
 
     for (index = 0; index < node_count; ++index) {
-        if (nodes[index].physical_count == 2 &&
+        if (nodes[index].physical_count > 1 &&
             target == nodes[index].physical_first + 1u) {
+            return true;
+        }
+        if (nodes[index].physical_count > 2 &&
+            target > nodes[index].physical_first &&
+            target < nodes[index].physical_first +
+                         nodes[index].physical_count) {
             return true;
         }
     }
@@ -639,6 +1167,7 @@ static bool validate_plan(const vc_psv_plan *plan,
     size_t index;
     size_t previous_end = 0;
     size_t maximum_actions = 0;
+    size_t maximum_reads = 0;
     bool needs_resolve = false;
     bool needs_read = false;
     bool needs_buttons = false;
@@ -646,6 +1175,7 @@ static bool validate_plan(const vc_psv_plan *plan,
     if (plan == NULL || callbacks == NULL || report == NULL ||
         plan->schema_version != VC_PSV_PLAN_SCHEMA_VERSION ||
         plan->maximum_actions > VC_PSV_MAX_ACTION_LIMIT ||
+        plan->maximum_memory_reads > VC_PSV_MAX_READ_LIMIT ||
         (nodes == NULL && plan->node_count != 0) ||
         (actions == NULL && action_capacity != 0) ||
         action_capacity < plan->maximum_actions ||
@@ -667,20 +1197,130 @@ static bool validate_plan(const vc_psv_plan *plan,
         const vc_psv_plan_node *node = &nodes[index];
         size_t node_end;
         size_t action_increment = 0;
+        size_t read_increment = 0;
+        size_t expected_physical_count = 1;
+        const uint32_t known_diagnostics =
+            VC_PSV_PLAN_DIAGNOSTIC_POINTER_LEVEL |
+            VC_PSV_PLAN_DIAGNOSTIC_POINTER_TERMINAL_MARKER |
+            VC_PSV_PLAN_DIAGNOSTIC_POINTER_REPEAT_MARKER |
+            VC_PSV_PLAN_DIAGNOSTIC_POINTER_U32_GAP |
+            VC_PSV_PLAN_DIAGNOSTIC_POINTER_MOV_WIDTH |
+            VC_PSV_PLAN_DIAGNOSTIC_POINTER_MOV_LEVEL |
+            VC_PSV_PLAN_DIAGNOSTIC_POINTER_MOV_MARKER;
 
         if (!valid_width(node->width) ||
             !valid_operation_flags(node->flags) ||
+            (node->diagnostics & ~known_diagnostics) != 0 ||
             node->physical_count == 0 ||
             node->physical_first < previous_end ||
             !add_size(node->physical_first, node->physical_count, &node_end) ||
             node_end > plan->physical_record_count) {
             return false;
         }
-        if ((node->kind == VC_PSV_PLAN_REPEAT &&
-             node->physical_count != 2) ||
-            (node->kind != VC_PSV_PLAN_REPEAT &&
-             node->physical_count != 1)) {
+        switch (node->kind) {
+        case VC_PSV_PLAN_REPEAT:
+            expected_physical_count = 2;
+            break;
+        case VC_PSV_PLAN_POINTER_WRITE:
+            if (!valid_pointer_path(&node->destination_pointer)) {
+                return false;
+            }
+            expected_physical_count =
+                (size_t)node->destination_pointer.level_count + 1u;
+            break;
+        case VC_PSV_PLAN_POINTER_REPEAT:
+            if (!valid_pointer_path(&node->destination_pointer)) {
+                return false;
+            }
+            expected_physical_count =
+                (size_t)node->destination_pointer.level_count + 2u;
+            break;
+        case VC_PSV_PLAN_POINTER_MOVE:
+            if (!valid_pointer_path(&node->destination_pointer) ||
+                !valid_pointer_path(&node->source_pointer) ||
+                node->source_pointer.level_count !=
+                    node->destination_pointer.level_count) {
+                return false;
+            }
+            expected_physical_count =
+                ((size_t)node->destination_pointer.level_count + 1u) * 2u;
+            break;
+        default:
+            break;
+        }
+        if (node->physical_count != expected_physical_count) {
             return false;
+        }
+        if (node->kind <= VC_PSV_PLAN_CONDITION_GATE) {
+            if (node->diagnostics != VC_PSV_PLAN_DIAGNOSTIC_NONE ||
+                !pointer_path_is_zero(&node->destination_pointer) ||
+                !pointer_path_is_zero(&node->source_pointer) ||
+                node->pointer_increment_selector != 0 ||
+                node->observed_source_width_index != 0 ||
+                node->observed_source_level_count != 0) {
+                return false;
+            }
+        } else if (node->kind == VC_PSV_PLAN_POINTER_WRITE) {
+            const uint32_t allowed =
+                VC_PSV_PLAN_DIAGNOSTIC_POINTER_LEVEL |
+                VC_PSV_PLAN_DIAGNOSTIC_POINTER_TERMINAL_MARKER;
+
+            if ((node->diagnostics & ~allowed) != 0 ||
+                (node->destination_pointer.level_count >
+                     VC_PSV_POINTER_CANONICAL_MAX_LEVELS) !=
+                    ((node->diagnostics &
+                      VC_PSV_PLAN_DIAGNOSTIC_POINTER_LEVEL) != 0) ||
+                node->observed_source_width_index != 0 ||
+                node->observed_source_level_count != 0) {
+                return false;
+            }
+        } else if (node->kind == VC_PSV_PLAN_POINTER_REPEAT) {
+            const uint32_t allowed =
+                VC_PSV_PLAN_DIAGNOSTIC_POINTER_LEVEL |
+                VC_PSV_PLAN_DIAGNOSTIC_POINTER_REPEAT_MARKER |
+                VC_PSV_PLAN_DIAGNOSTIC_POINTER_U32_GAP;
+
+            if ((node->diagnostics & ~allowed) != 0 ||
+                (node->destination_pointer.level_count >
+                     VC_PSV_POINTER_CANONICAL_MAX_LEVELS) !=
+                    ((node->diagnostics &
+                      VC_PSV_PLAN_DIAGNOSTIC_POINTER_LEVEL) != 0) ||
+                (node->address_gap > UINT32_C(0xffff)) !=
+                    ((node->diagnostics &
+                      VC_PSV_PLAN_DIAGNOSTIC_POINTER_U32_GAP) != 0) ||
+                node->observed_source_width_index != 0 ||
+                node->observed_source_level_count != 0) {
+                return false;
+            }
+        } else if (node->kind == VC_PSV_PLAN_POINTER_MOVE) {
+            const uint32_t allowed =
+                VC_PSV_PLAN_DIAGNOSTIC_POINTER_LEVEL |
+                VC_PSV_PLAN_DIAGNOSTIC_POINTER_MOV_WIDTH |
+                VC_PSV_PLAN_DIAGNOSTIC_POINTER_MOV_LEVEL |
+                VC_PSV_PLAN_DIAGNOSTIC_POINTER_MOV_MARKER;
+            const uint8_t expected_source_width =
+                node->width == VC_PSV_WIDTH_U8
+                    ? UINT8_C(4)
+                    : node->width == VC_PSV_WIDTH_U16
+                          ? UINT8_C(5)
+                          : UINT8_C(6);
+
+            if ((node->diagnostics & ~allowed) != 0 ||
+                (node->destination_pointer.level_count >
+                     VC_PSV_POINTER_CANONICAL_MAX_LEVELS) !=
+                    ((node->diagnostics &
+                      VC_PSV_PLAN_DIAGNOSTIC_POINTER_LEVEL) != 0) ||
+                (node->observed_source_width_index !=
+                     expected_source_width) !=
+                    ((node->diagnostics &
+                      VC_PSV_PLAN_DIAGNOSTIC_POINTER_MOV_WIDTH) != 0) ||
+                (node->observed_source_level_count !=
+                     node->destination_pointer.level_count) !=
+                    ((node->diagnostics &
+                      VC_PSV_PLAN_DIAGNOSTIC_POINTER_MOV_LEVEL) != 0) ||
+                node->pointer_increment_selector != 0) {
+                return false;
+            }
         }
         if (node_has_destination(node->kind)) {
             if (!valid_plan_address(&node->destination)) {
@@ -695,9 +1335,12 @@ static bool validate_plan(const vc_psv_plan *plan,
         }
         switch (node->kind) {
         case VC_PSV_PLAN_WRITE:
+            action_increment = 1;
+            break;
         case VC_PSV_PLAN_PATCH:
             action_increment = 1;
-            needs_read |= node->kind == VC_PSV_PLAN_PATCH;
+            read_increment = 1;
+            needs_read = true;
             break;
         case VC_PSV_PLAN_MOVE:
             if (!valid_plan_address(&node->source)) {
@@ -708,9 +1351,60 @@ static bool validate_plan(const vc_psv_plan *plan,
                 VC_PSV_ADDRESS_SELECTED_MODULE_RELATIVE;
             needs_read = true;
             action_increment = 1;
+            read_increment = 1;
             break;
         case VC_PSV_PLAN_REPEAT:
             action_increment = (size_t)node->repeat_count;
+            break;
+        case VC_PSV_PLAN_POINTER_WRITE:
+            if (!pointer_path_is_zero(&node->source_pointer) ||
+                node->pointer_increment_selector != 0) {
+                return false;
+            }
+            needs_resolve |=
+                node->destination_pointer.base.mode ==
+                VC_PSV_ADDRESS_SELECTED_MODULE_RELATIVE;
+            needs_read = true;
+            action_increment = 1;
+            read_increment =
+                (size_t)node->destination_pointer.level_count;
+            break;
+        case VC_PSV_PLAN_POINTER_REPEAT:
+            if (!pointer_path_is_zero(&node->source_pointer) ||
+                node->pointer_increment_selector >
+                    node->destination_pointer.level_count) {
+                return false;
+            }
+            if (node->repeat_count != 0) {
+                needs_resolve |=
+                    node->destination_pointer.base.mode ==
+                    VC_PSV_ADDRESS_SELECTED_MODULE_RELATIVE;
+                needs_read = true;
+            }
+            action_increment = (size_t)node->repeat_count;
+            if (!multiply_size(action_increment,
+                               node->destination_pointer.level_count,
+                               &read_increment)) {
+                return false;
+            }
+            break;
+        case VC_PSV_PLAN_POINTER_MOVE:
+            if (node->observed_source_width_index < UINT8_C(4) ||
+                node->observed_source_width_index > UINT8_C(6) ||
+                node->observed_source_level_count == 0 ||
+                node->observed_source_level_count >
+                    VC_PSV_POINTER_MAX_LEVELS) {
+                return false;
+            }
+            needs_resolve |=
+                node->destination_pointer.base.mode ==
+                    VC_PSV_ADDRESS_SELECTED_MODULE_RELATIVE ||
+                node->source_pointer.base.mode ==
+                    VC_PSV_ADDRESS_SELECTED_MODULE_RELATIVE;
+            needs_read = true;
+            action_increment = 1;
+            read_increment =
+                (size_t)node->destination_pointer.level_count * 2u + 1u;
             break;
         case VC_PSV_PLAN_BUTTON_GATE: {
             size_t target;
@@ -719,7 +1413,7 @@ static bool validate_plan(const vc_psv_plan *plan,
                 !add_size(node->physical_first,
                           (size_t)node->skip_records + 1u, &target) ||
                 target > plan->physical_record_count ||
-                target_splits_repeat(nodes, plan->node_count, target)) {
+                target_splits_multiline(nodes, plan->node_count, target)) {
                 return false;
             }
             needs_buttons = true;
@@ -731,10 +1425,11 @@ static bool validate_plan(const vc_psv_plan *plan,
                 !add_size(node->physical_first,
                           (size_t)node->skip_records + 1u, &target) ||
                 target > plan->physical_record_count ||
-                target_splits_repeat(nodes, plan->node_count, target)) {
+                target_splits_multiline(nodes, plan->node_count, target)) {
                 return false;
             }
             needs_read = true;
+            read_increment = 1;
             break;
         }
         default:
@@ -745,9 +1440,14 @@ static bool validate_plan(const vc_psv_plan *plan,
             maximum_actions > VC_PSV_MAX_ACTION_LIMIT) {
             return false;
         }
+        if (!add_size(maximum_reads, read_increment, &maximum_reads) ||
+            maximum_reads > VC_PSV_MAX_READ_LIMIT) {
+            return false;
+        }
         previous_end = node_end;
     }
     if (maximum_actions != plan->maximum_actions ||
+        maximum_reads != plan->maximum_memory_reads ||
         (needs_resolve && callbacks->resolve_module_base == NULL) ||
         (needs_read && callbacks->read_memory == NULL) ||
         (needs_buttons && callbacks->read_buttons == NULL)) {
@@ -759,8 +1459,21 @@ static bool validate_plan(const vc_psv_plan *plan,
 typedef enum resolve_status {
     RESOLVE_OK = 0,
     RESOLVE_CALLBACK_FAILED,
-    RESOLVE_OVERFLOW
+    RESOLVE_OVERFLOW,
+    RESOLVE_INVALID_POINTER
 } resolve_status;
+
+static vc_psv_evaluate_status evaluate_status_from_resolve(
+    resolve_status status)
+{
+    if (status == RESOLVE_OVERFLOW) {
+        return VC_PSV_EVALUATE_ADDRESS_OVERFLOW;
+    }
+    if (status == RESOLVE_INVALID_POINTER) {
+        return VC_PSV_EVALUATE_INVALID_POINTER;
+    }
+    return VC_PSV_EVALUATE_CALLBACK_FAILED;
+}
 
 static resolve_status resolve_address(
     const vc_psv_plan_address *address,
@@ -895,6 +1608,56 @@ static bool read_logical_memory(
     return true;
 }
 
+static resolve_status resolve_pointer_path(
+    const vc_psv_pointer_path *path,
+    uint8_t increment_selector,
+    uint32_t increment,
+    const vc_psv_evaluation_callbacks *callbacks,
+    const vc_psv_action *actions,
+    size_t action_count,
+    uint32_t *resolved,
+    vc_psv_evaluation_report *report)
+{
+    uint32_t cursor;
+    size_t level;
+    resolve_status status =
+        resolve_address(&path->base, callbacks, &cursor, report);
+
+    if (status != RESOLVE_OK) {
+        return status;
+    }
+    if (increment_selector == 0) {
+        cursor = (uint32_t)(cursor + increment);
+    }
+    for (level = 0; level < path->level_count; ++level) {
+        uint8_t bytes[4] = {0, 0, 0, 0};
+        uint32_t pointer;
+        uint32_t offset = path->reads[level].offset;
+
+        if (cursor == UINT32_C(0)) {
+            return RESOLVE_INVALID_POINTER;
+        }
+        if (!address_range_is_valid(cursor, VC_PSV_WIDTH_U32)) {
+            return RESOLVE_OVERFLOW;
+        }
+        if (!read_logical_memory(callbacks, actions, action_count,
+                                 cursor, VC_PSV_WIDTH_U32,
+                                 bytes, report)) {
+            return RESOLVE_CALLBACK_FAILED;
+        }
+        if (increment_selector == level + 1u) {
+            offset = (uint32_t)(offset + increment);
+        }
+        pointer = decode_little_endian(bytes, VC_PSV_WIDTH_U32);
+        if (pointer == UINT32_C(0)) {
+            return RESOLVE_INVALID_POINTER;
+        }
+        cursor = (uint32_t)(pointer + offset);
+    }
+    *resolved = cursor;
+    return RESOLVE_OK;
+}
+
 vc_psv_evaluate_status vc_psv_evaluate_plan(
     const vc_psv_plan *plan,
     const vc_psv_plan_node *nodes,
@@ -937,9 +1700,7 @@ vc_psv_evaluate_status vc_psv_evaluate_plan(
             resolved = resolve_address(&node->destination, callbacks,
                                        &address, &result);
             if (resolved != RESOLVE_OK) {
-                status = resolved == RESOLVE_OVERFLOW
-                             ? VC_PSV_EVALUATE_ADDRESS_OVERFLOW
-                             : VC_PSV_EVALUATE_CALLBACK_FAILED;
+                status = evaluate_status_from_resolve(resolved);
                 break;
             }
             if (!address_range_is_valid(address, node->width)) {
@@ -957,9 +1718,7 @@ vc_psv_evaluate_status vc_psv_evaluate_plan(
             resolved = resolve_address(&node->source, callbacks,
                                        &source_address, &result);
             if (resolved != RESOLVE_OK) {
-                status = resolved == RESOLVE_OVERFLOW
-                             ? VC_PSV_EVALUATE_ADDRESS_OVERFLOW
-                             : VC_PSV_EVALUATE_CALLBACK_FAILED;
+                status = evaluate_status_from_resolve(resolved);
                 break;
             }
             if (!address_range_is_valid(source_address, node->width)) {
@@ -969,9 +1728,7 @@ vc_psv_evaluate_status vc_psv_evaluate_plan(
             resolved = resolve_address(&node->destination, callbacks,
                                        &address, &result);
             if (resolved != RESOLVE_OK) {
-                status = resolved == RESOLVE_OVERFLOW
-                             ? VC_PSV_EVALUATE_ADDRESS_OVERFLOW
-                             : VC_PSV_EVALUATE_CALLBACK_FAILED;
+                status = evaluate_status_from_resolve(resolved);
                 break;
             }
             if (!address_range_is_valid(address, node->width)) {
@@ -1003,9 +1760,7 @@ vc_psv_evaluate_status vc_psv_evaluate_plan(
             resolved = resolve_address(&node->destination, callbacks,
                                        &start_address, &result);
             if (resolved != RESOLVE_OK) {
-                status = resolved == RESOLVE_OVERFLOW
-                             ? VC_PSV_EVALUATE_ADDRESS_OVERFLOW
-                             : VC_PSV_EVALUATE_CALLBACK_FAILED;
+                status = evaluate_status_from_resolve(resolved);
                 break;
             }
             for (repeat_index = 0;
@@ -1035,6 +1790,114 @@ vc_psv_evaluate_status vc_psv_evaluate_plan(
                     break;
                 }
             }
+            break;
+        }
+        case VC_PSV_PLAN_POINTER_WRITE:
+            resolved = resolve_pointer_path(
+                &node->destination_pointer, 0, UINT32_C(0),
+                callbacks, actions, result.action_count, &address,
+                &result);
+            if (resolved != RESOLVE_OK) {
+                status = evaluate_status_from_resolve(resolved);
+                break;
+            }
+            if (address == UINT32_C(0)) {
+                status = VC_PSV_EVALUATE_INVALID_POINTER;
+                break;
+            }
+            if (!address_range_is_valid(address, node->width)) {
+                status = VC_PSV_EVALUATE_ADDRESS_OVERFLOW;
+                break;
+            }
+            status = append_value_action(
+                actions, &result.action_count, VC_PSV_ACTION_WRITE,
+                node->width, address, node->value, node_index);
+            break;
+        case VC_PSV_PLAN_POINTER_REPEAT: {
+            uint32_t repeat_index;
+
+            for (repeat_index = 0;
+                 repeat_index < node->repeat_count;
+                 ++repeat_index) {
+                const uint32_t address_delta =
+                    (uint32_t)((uint64_t)repeat_index *
+                               (uint64_t)node->address_gap);
+                const uint32_t value_delta =
+                    (uint32_t)((uint64_t)repeat_index *
+                               (uint64_t)node->value_increment);
+                const uint32_t repeated_value =
+                    (uint32_t)(node->value + value_delta);
+
+                resolved = resolve_pointer_path(
+                    &node->destination_pointer,
+                    node->pointer_increment_selector,
+                    address_delta, callbacks, actions,
+                    result.action_count, &address, &result);
+                if (resolved != RESOLVE_OK) {
+                    status = evaluate_status_from_resolve(resolved);
+                    break;
+                }
+                if (address == UINT32_C(0)) {
+                    status = VC_PSV_EVALUATE_INVALID_POINTER;
+                    break;
+                }
+                if (!address_range_is_valid(address, node->width)) {
+                    status = VC_PSV_EVALUATE_ADDRESS_OVERFLOW;
+                    break;
+                }
+                status = append_value_action(
+                    actions, &result.action_count, VC_PSV_ACTION_WRITE,
+                    node->width, address, repeated_value, node_index);
+                if (status != VC_PSV_EVALUATE_OK) {
+                    break;
+                }
+            }
+            break;
+        }
+        case VC_PSV_PLAN_POINTER_MOVE: {
+            uint32_t source_address;
+            vc_psv_action *action;
+
+            resolved = resolve_pointer_path(
+                &node->destination_pointer, 0, UINT32_C(0),
+                callbacks, actions, result.action_count, &address,
+                &result);
+            if (resolved != RESOLVE_OK) {
+                status = evaluate_status_from_resolve(resolved);
+                break;
+            }
+            resolved = resolve_pointer_path(
+                &node->source_pointer, 0, UINT32_C(0),
+                callbacks, actions, result.action_count,
+                &source_address, &result);
+            if (resolved != RESOLVE_OK) {
+                status = evaluate_status_from_resolve(resolved);
+                break;
+            }
+            if (address == UINT32_C(0) ||
+                source_address == UINT32_C(0)) {
+                status = VC_PSV_EVALUATE_INVALID_POINTER;
+                break;
+            }
+            if (!address_range_is_valid(address, node->width) ||
+                !address_range_is_valid(source_address, node->width)) {
+                status = VC_PSV_EVALUATE_ADDRESS_OVERFLOW;
+                break;
+            }
+            action = &actions[result.action_count];
+            memset(action, 0, sizeof(*action));
+            if (!read_logical_memory(
+                    callbacks, actions, result.action_count,
+                    source_address, node->width, action->bytes,
+                    &result)) {
+                status = VC_PSV_EVALUATE_CALLBACK_FAILED;
+                break;
+            }
+            action->kind = VC_PSV_ACTION_WRITE;
+            action->width = node->width;
+            action->address = address;
+            action->source_node_index = node_index;
+            ++result.action_count;
             break;
         }
         case VC_PSV_PLAN_PATCH: {
