@@ -13,11 +13,12 @@ allocation-free Quick Menu launch-request broker, a caller-attesting,
 copy-bounded portable launch service front door, a host-testable Quick Menu
 launcher and game claimant, and a portable authorization-to-pause menu
 coordinator, plus a portable trusted-target attestation catalog and checked
-range resolver, all with host tests. A separate ordinary user-mode Vita
-self-test now exercises the scanner and five-second Select menu against memory
-owned by that test app. It is not a plugin and does not attach to a process,
-suspend another application's threads, read or write another application's
-memory, freeze values, connect over a network, or download cheats.
+range resolver, and a separate allocation-free read-only memory-service
+contract, all with host tests. A separate ordinary user-mode Vita self-test now
+exercises the scanner and five-second Select menu against memory owned by that
+test app. It is not a plugin and does not attach to a process, suspend another
+application's threads, read or write another application's memory, freeze
+values, connect over a network, or download cheats.
 
 ## Why this project exists
 
@@ -142,16 +143,35 @@ The same portable milestone now also:
 - invalidates and scrubs snapshots on foreground loss/change, process exit,
   module churn, plugin unload, reset, stop, or sequence rollback while keeping
   revisions nonzero and non-reusable within one instance; and
-- keeps menu lifecycle separate from rendering, input, discovery, patch
-  rollback, memory access, write, search, freeze, and hardware operations.
+- exposes an independent v1 read-only ABI with exact 80-byte requests,
+  64-byte response headers, explicit little-endian fields, and at most 256
+  payload bytes;
+- permits only an exactly attested game-plugin caller with `READ_TARGET`,
+  an internally activated nonrepeating session, the active acknowledged
+  menu/pause lineage, and the current foreground target/attestation revision;
+- resolves only module/segment/offset requests through target attestation,
+  rejects unreadable, cross-segment, stale, wrapping, zero, or over-limit
+  ranges, and derives the absolute target address only for one injected read
+  callback;
+- enforces finite byte, operation, and time budgets without extension, charges
+  every fully authenticated request against the operation budget, revalidates
+  target lineage after each read, rejects short or mutated reads, and scrubs
+  every failed payload;
+- journals one exact read/status response across copy-out failure so retries
+  never repeat a successful read, while lifecycle invalidation scrubs the
+  session and journal; and
+- keeps menu lifecycle and portable reading separate from rendering, input,
+  native discovery/transport, patch rollback, write, search UI, freeze, and
+  hardware operations.
 
 The pause transaction, menu coordinator, launch broker, launch service,
-launcher controller, game claimant, and target attestation catalog have no
-platform authority by themselves; process identity, foreground, overlay,
-presentation, module/segment/thread enumeration, thread ownership/control,
-copy/transport, UI, worker, clock, and cleanup operations are injected by
-future native adapters. No imported operation is executed and no memory is
-read in this milestone.
+launcher controller, game claimant, target attestation catalog, and read-only
+memory service have no platform authority by themselves; process identity,
+foreground, overlay, presentation, module/segment/thread enumeration, thread
+ownership/control, target read, copy/transport, UI, worker, clock, and cleanup
+operations are injected by future native adapters. Host tests read only
+synthetic arrays. No imported operation is executed and no Vita
+foreign-process memory is read in this milestone.
 See
 [docs/legacy-psv-compatibility.md](docs/legacy-psv-compatibility.md).
 
@@ -216,11 +236,11 @@ hooks and cleanup pass hardware gates. The portable broker, byte ABI, service bo
 injected-game claimant/open-authorization lifecycle, and portable
 authorization-to-pause/menu-lease coordinator, trusted target snapshot, policy
 matcher, module/segment catalog, exact thread ownership validator, and symbolic
-range resolver are implemented. Verified native target/foreground/module/
-segment/thread adapters, a native QuickMenuReborn module, kernel/user
-transport and injection, actual measured title manifests, a read-only memory
-service, renderer/input/menu/search UI, and write/rollback hardware gates are
-not.
+range resolver, plus the portable bounded read-only memory service are
+implemented. Verified native target/foreground/module/segment/thread/read
+adapters, an attested kernel/user transport, a native QuickMenuReborn module,
+injection, actual measured title manifests, renderer/input/menu/search UI, and
+write/rollback hardware gates are not.
 
 The online database will supply bounded declarative records, never executable
 scripts. The kernel service must expose a narrow versioned ABI and pass a
@@ -266,13 +286,16 @@ and
 `build-sanitize/vitacheat_launch_claimant_fuzzer -runs=10000 -max_len=512` and
 `build-sanitize/vitacheat_menu_coordinator_fuzzer -runs=10000 -max_len=512`
 and
-`build-sanitize/vitacheat_target_attestation_fuzzer -runs=10000 -max_len=640`.
+`build-sanitize/vitacheat_target_attestation_fuzzer -runs=10000 -max_len=640`
+and
+`build-sanitize/vitacheat_memory_service_fuzzer -runs=10000 -max_len=640`.
 Dependency-free deterministic smoke targets are also available as
 `make launch-service-fuzz-smoke` and
 `make quick-menu-launcher-fuzz-smoke` and
 `make launch-claimant-fuzz-smoke` and
 `make menu-coordinator-fuzz-smoke` and
-`make target-attestation-fuzz-smoke`. GCC's bounded static-analyzer pass is
+`make target-attestation-fuzz-smoke` and
+`make memory-service-fuzz-smoke`. GCC's bounded static-analyzer pass is
 available as `make analyze` or with
 `-DVITACHEAT_ENABLE_ANALYZER=ON -DBUILD_TESTING=OFF`.
 
@@ -346,6 +369,9 @@ listed only after their own gates pass.
 - `include/vitacheat/target_attestation.h` — trusted target catalog,
   transactional adapter contract, exact policy/thread checks, lifecycle
   invalidation, and symbolic range resolution.
+- `include/vitacheat/memory_read.h` — fixed little-endian read/status ABI.
+- `include/vitacheat/memory_service.h` — trusted authorization, quotas,
+  target-read adapter, lifecycle, and result-journal boundary.
 - `src/search.c` — portable little-endian implementation.
 - `src/legacy_psv.c` — syntax indexing and conservative operation mapping.
 - `src/menu_activation.c` — five-second one-shot activation logic.
@@ -361,6 +387,9 @@ listed only after their own gates pass.
   watchdog, lifecycle revalidation, and retryable reverse cleanup.
 - `src/target_attestation.c` — immutable snapshot publication, identity and
   catalog validation, policy matching, ownership checks, and range resolution.
+- `src/memory_read.c` — exact v1 read/status wire validation and codecs.
+- `src/memory_service.c` — menu-bound read authorization, symbolic resolution,
+  bounded target reads, post-read race checks, quotas, and copy-out recovery.
 - `tests/host/test_search.c` — native behavioral and boundary tests.
 - `tests/host/test_legacy_psv.c` — mixed-format, truncation, and fail-closed
   importer tests.
@@ -380,6 +409,11 @@ listed only after their own gates pass.
 - `tests/host/test_target_attestation.c` — hostile adapter collection,
   identity/catalog/policy/range/thread boundaries, lifecycle, and secrecy
   tests, including test-only `PCSA00133`/`1.00` placeholder facts.
+- `tests/host/test_memory_read.c` — exact ABI vectors, round trips, limits, and
+  malformed request/response tests.
+- `tests/host/test_memory_service.c` — trusted activation, symbolic read,
+  caller/race/range/quota/copy/lifecycle, journal, and state-model tests using
+  explicitly synthetic `PCSA00133` memory.
 - `tests/fuzz/fuzz_launch_broker.c` — bounded codec/dispatch/lifecycle fuzzer.
 - `tests/fuzz/fuzz_launch_service.c` — bounded untrusted-byte, metadata, copy,
   and service-lifecycle fuzzer.
@@ -391,6 +425,8 @@ listed only after their own gates pass.
   authorization, callback, lease, lifecycle, and cleanup fuzzer.
 - `tests/fuzz/fuzz_target_attestation.c` — bounded hostile catalog,
   transaction, lifecycle, and range-query fuzzer.
+- `tests/fuzz/fuzz_memory_service.c` — bounded wire, identity, snapshot,
+  callback, quota, time, journal, and lifecycle fuzzer.
 - `vita-self-test/` — ordinary user-mode on-device menu and owned-buffer probe.
 - `docs/architecture.md` — component boundaries and data flow.
 - `docs/legacy-psv-compatibility.md` — compatibility guarantees and limits.

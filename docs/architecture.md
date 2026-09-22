@@ -7,7 +7,7 @@ what a parsing or UI error can do.
 
 ## `vitacheat_core`
 
-The current component is a deterministic, allocation-free C library. It accepts
+The search component is a deterministic, allocation-free C library. It accepts
 immutable byte snapshots and caller-owned result buffers. It knows nothing
 about processes, absolute addresses, files, sockets, VitaSDK, or the kernel.
 
@@ -42,11 +42,14 @@ The portable core also owns authority-free helpers:
 - a trusted-target attestation catalog that transactionally copies bounded
   process, build, module, segment, and thread facts from an injected adapter,
   publishes immutable revisions, and answers exact policy, ownership, and
-  symbolic range queries.
+  symbolic range queries; and
+- a separate read-only memory service that accepts only symbolic
+  module/segment/offset requests from the exactly attested game plugin while an
+  internally trusted, acknowledged menu/pause lineage remains active.
 
 None of these helpers reads controller hardware, enumerates or suspends threads,
-opens files, renders UI, or writes memory. Those responsibilities remain in
-adapters with separately testable authority.
+opens files, renders UI, or writes memory. The memory service can call only an
+injected bounded target-read adapter; no native implementation is present.
 
 ### Portable Quick Menu broker and v1 ABI
 
@@ -285,7 +288,7 @@ memory, restore patches, or execute search/write/freeze operations.
 ### Portable target attestation and range foundation
 
 `include/vitacheat/target_attestation.h` defines the read-only trust boundary
-needed before a pause adapter or future memory service can use a target.
+needed before a pause adapter or the memory service can use a target.
 Collection is begin/enumerate/end through injected callbacks. A nonzero
 mutation token must survive every module and thread read and the completion
 callback; mutation retries are capped at three. Adapter calls run outside the
@@ -297,8 +300,9 @@ Each immutable snapshot has a nonzero local revision and lifecycle generation,
 exact PID/process generation and foreground sequence, canonical bounded title
 ID, optional bounded version label, and an opaque build fingerprint algorithm
 and bytes supplied by the adapter. The portable layer implements no hash.
-Modules use a stable nonzero module ID plus nonzero load generation. Their
-bounded segments have unique indices, nonzero sizes, checked 32-bit ends, and
+Modules use a stable numeric module ID (including zero) plus nonzero load
+generation. Their bounded segments have unique indices, nonzero sizes, checked
+32-bit ends, and
 explicit read/write/execute permissions; overlap and unknown flags/bits are
 rejected. Thread descriptors must prove each positive unique ID belongs to the
 same exact PID/process generation. Opaque role flags are retained but never
@@ -322,28 +326,69 @@ unload, reset, stop, and sequence rollback invalidate derived use. Stop scrubs
 identity, fingerprint, module, address, and thread data before optional cleanup
 and remains stopped on cleanup failure.
 
-This is a host-first catalog and validator, not native discovery. No
-VitaSDK/taiHEN generation source, trusted enumeration path, or kernel transport
-meeting the contract is documented in this repository, so no guessed Vita
-adapter or firmware offset is added. Actual measured title manifests,
-read-only copying, injection, renderer/input hooks, menu/search UI, and
-write/rollback hardware gates remain separate work.
+### Portable read-only memory service
 
-The portable target contract is C11 plus an integer pointer type (`uintptr_t`)
+`include/vitacheat/memory_read.h` is intentionally separate from launch-only
+v1. Its v1 request is exactly 80 bytes. Responses have an exact 64-byte header
+and at most 256 payload bytes. Every integer is encoded explicitly in little
+endian; no packed structure, host pointer, absolute address, write payload, or
+generic operation crosses the boundary. The only operations are `READ` and
+`STATUS`, the only role is the game plugin, and the exact capability is
+`READ_TARGET`.
+
+`include/vitacheat/memory_service.h` owns session authority. The untrusted game
+request can present a session ID but cannot create, extend, or reset one.
+Trusted activation first inspects the coordinator's acknowledged `OPEN`
+lineage, then exact-matches the caller, foreground sequence, PID/process
+generation, plugin module generation, attestation revision/lifecycle, and
+fixed menu deadline. A new service-local session ID never repeats within the
+service lifetime. Every session has finite byte and operation budgets and a
+deadline capped at 60 seconds; reads and status do not extend or reset any of
+them. Every fully authenticated request consumes one operation, including a
+request later denied by symbolic range or permission checks; bytes are charged
+only immediately before invoking the one read callback.
+
+Each read copies exactly one 80-byte request to owned storage, authenticates
+the caller, revalidates the active lineage and immutable target, and asks
+`target_attestation` to resolve exactly one readable
+module/load-generation/segment/offset range. Only then is a checked 32-bit
+absolute target address derived internally for one bounded adapter callback.
+The callback must report exact bytes read and its observed target generation
+and revision. A second trusted lineage, foreground, and attestation check after
+the callback rejects short reads, process exit, target mutation, or stale
+completion and scrubs all payload bytes.
+
+All callbacks execute outside the service's nonblocking transaction gate under
+a reentry exclusion. A successful or otherwise committed read/status response
+is encoded into initialized fixed storage and journaled before copy-out. An
+exact retry returns stable bytes without repeating the read or charging quota
+again; a different request is blocked. Close, expiry, rollback, target change,
+overlay reopen, presentation loss, process exit, plugin unload, reset, and stop
+scrub both session and journal immediately. Public status text is coarse and
+contains no address, token, identity, module, revision, or payload data.
+
+This remains host-first. No verified VitaSDK/taiHEN generation source, native
+attested transport, or safe process-memory read API meeting the callback
+contract is pinned, so no `.skprx`, syscall stub, firmware offset, or hardware
+claim is added. Tests use explicit synthetic `PCSA00133` module-0/segment-1
+facts only. Native injection, renderer/input hooks, menu/search UI, measured
+manifests, write/rollback capability, and hardware gates remain separate work.
+
+The portable scanner contract is C11 plus an integer pointer type (`uintptr_t`)
 wide enough to represent object ranges. That holds for the supported Windows
 host and ARM Vita targets and lets the parser reject overlapping source and
 output buffers without relying on undefined relational pointer comparisons.
 
 ## Future privileged capabilities
 
-The implemented service is launch-only, and target attestation is
-representation and validation only. A later privileged component may
-expose the following separately versioned capabilities to the injected user
-plugin rather than one general memory service:
+The launch service remains launch-only. The read service is a separate
+portable capability with no native adapter. A later privileged component may
+expose these separately versioned capabilities to the injected user plugin
+rather than one general memory service:
 
 1. acquire native facts for the existing verified title/module catalog;
 2. list native bounded, allowlisted user-memory regions;
-3. copy a readable region into a snapshot;
+3. implement the reviewed native adapter for the existing bounded read ABI;
 4. enumerate explicit target-thread ownership for cooperative menu pause;
 5. arm a short-lived write capability after on-device approval;
 6. apply typed writes or freezes from declarative records;

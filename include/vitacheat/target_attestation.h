@@ -292,6 +292,22 @@ vc_target_status vc_target_attestation_resolve_range(
     vc_target_range *range);
 
 /*
+ * Resolves a caller's symbolic module/segment/offset tuple without accepting
+ * an absolute address. The result remains symbolic and is bound to exactly
+ * one readable segment in the requested immutable snapshot.
+ */
+vc_target_status vc_target_attestation_resolve_segment_range(
+    vc_target_attestation *attestation,
+    uint64_t snapshot_revision,
+    uint32_t module_id,
+    uint64_t module_load_generation,
+    uint32_t segment_index,
+    uint32_t segment_offset,
+    uint32_t length,
+    uint32_t required_permissions,
+    vc_target_range *range);
+
+/*
  * Both sets are explicit inputs. They must be sorted, unique, positive IDs.
  * No descriptor name, role flag, priority, index, or ordering heuristic is
  * used to select gameplay threads.

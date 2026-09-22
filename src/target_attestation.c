@@ -281,8 +281,7 @@ static vc_target_status vc_target_normalize_module(
     uint32_t index;
     uint32_t other;
 
-    if (module->module_id == 0 ||
-        module->load_generation == 0) {
+    if (module->load_generation == 0) {
         return VC_TARGET_STATUS_INVALID_MODULE;
     }
     if (module->segment_count == 0) {
@@ -685,8 +684,7 @@ static vc_target_status vc_target_normalize_policy(
            policy->fingerprint_size);
     normalized->module_count = policy->module_count;
     for (index = 0; index < policy->module_count; ++index) {
-        if (policy->modules[index].module_id == 0 ||
-            policy->modules[index].load_generation == 0 ||
+        if (policy->modules[index].load_generation == 0 ||
             policy->modules[index].reserved0 != 0) {
             memset(normalized, 0, sizeof(*normalized));
             return VC_TARGET_STATUS_INVALID_MODULE;
@@ -985,8 +983,7 @@ vc_target_status vc_target_attestation_find_segment(
     vc_target_module *module;
     uint32_t index;
 
-    if (module_id == 0 ||
-        module_load_generation == 0 ||
+    if (module_load_generation == 0 ||
         segment == NULL) {
         return VC_TARGET_STATUS_INVALID_ARGUMENT;
     }
@@ -1039,8 +1036,7 @@ vc_target_status vc_target_attestation_resolve_range(
     uint32_t range_end;
     uint32_t index;
 
-    if (module_id == 0 ||
-        module_load_generation == 0 ||
+    if (module_load_generation == 0 ||
         length == 0 || range == NULL) {
         return VC_TARGET_STATUS_INVALID_ARGUMENT;
     }
@@ -1118,6 +1114,91 @@ vc_target_status vc_target_attestation_resolve_range(
         attestation, VC_TARGET_STATUS_OK);
 }
 
+vc_target_status vc_target_attestation_resolve_segment_range(
+    vc_target_attestation *attestation,
+    uint64_t snapshot_revision,
+    uint32_t module_id,
+    uint64_t module_load_generation,
+    uint32_t segment_index,
+    uint32_t segment_offset,
+    uint32_t length,
+    uint32_t required_permissions,
+    vc_target_range *range)
+{
+    vc_target_status status;
+    vc_target_module *module;
+    vc_target_segment *segment = NULL;
+    uint32_t index;
+
+    if (module_load_generation == 0 ||
+        length == 0 || range == NULL) {
+        return VC_TARGET_STATUS_INVALID_ARGUMENT;
+    }
+    memset(range, 0, sizeof(*range));
+    if (required_permissions == 0 ||
+        (required_permissions & ~VC_TARGET_PERMISSION_ALL) != 0) {
+        return VC_TARGET_STATUS_UNKNOWN_PERMISSION;
+    }
+    if (length > UINT32_MAX - segment_offset) {
+        return VC_TARGET_STATUS_OVERFLOW;
+    }
+
+    status = vc_target_enter(attestation, true);
+    if (status != VC_TARGET_STATUS_OK) {
+        return status;
+    }
+    status = vc_target_require_snapshot(
+        attestation, snapshot_revision);
+    if (status != VC_TARGET_STATUS_OK) {
+        vc_target_leave(attestation);
+        return vc_target_result(attestation, status);
+    }
+    module = vc_target_find_module(
+        &attestation->snapshot, module_id,
+        module_load_generation);
+    if (module == NULL) {
+        vc_target_leave(attestation);
+        return vc_target_result(
+            attestation, VC_TARGET_STATUS_INVALID_MODULE);
+    }
+    for (index = 0; index < module->segment_count; ++index) {
+        if (module->segments[index].segment_index ==
+            segment_index) {
+            segment = &module->segments[index];
+            break;
+        }
+    }
+    if (segment == NULL) {
+        vc_target_leave(attestation);
+        return vc_target_result(
+            attestation, VC_TARGET_STATUS_INVALID_SEGMENT);
+    }
+    if ((segment->permissions & required_permissions) !=
+        required_permissions) {
+        vc_target_leave(attestation);
+        return vc_target_result(
+            attestation, VC_TARGET_STATUS_PERMISSION_DENIED);
+    }
+    if (segment_offset >= segment->size ||
+        length > segment->size - segment_offset) {
+        vc_target_leave(attestation);
+        return vc_target_result(
+            attestation,
+            VC_TARGET_STATUS_CROSS_SEGMENT_RANGE);
+    }
+
+    range->snapshot_revision = snapshot_revision;
+    range->module_id = module_id;
+    range->segment_index = segment_index;
+    range->module_load_generation = module_load_generation;
+    range->segment_offset = segment_offset;
+    range->length = length;
+    range->permissions = required_permissions;
+    vc_target_leave(attestation);
+    return vc_target_result(
+        attestation, VC_TARGET_STATUS_OK);
+}
+
 vc_target_status vc_target_attestation_validate_threads(
     vc_target_attestation *attestation,
     uint64_t snapshot_revision,
@@ -1173,7 +1254,6 @@ vc_target_status vc_target_attestation_validate_allowlist(
     if (binding == NULL || binding->process_id == 0 ||
         binding->process_generation == 0 ||
         binding->foreground_sequence == 0 ||
-        binding->module_id == 0 ||
         binding->module_load_generation == 0 ||
         binding->reserved0 != 0) {
         return VC_TARGET_STATUS_INVALID_IDENTITY;
@@ -1369,8 +1449,7 @@ vc_target_status vc_target_attestation_module_changed(
     bool found = false;
     bool generation_matches = false;
 
-    if (module_id == 0 ||
-        previous_load_generation == 0) {
+    if (previous_load_generation == 0) {
         return VC_TARGET_STATUS_INVALID_ARGUMENT;
     }
     status = vc_target_enter(attestation, true);

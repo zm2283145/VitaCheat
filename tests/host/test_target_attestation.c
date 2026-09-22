@@ -511,8 +511,7 @@ static void test_module_segment_and_thread_validation(void)
 
     set_valid_source(&source);
     source.modules[0].module_id = 0;
-    CHECK(source_status(&source) ==
-          VC_TARGET_STATUS_INVALID_MODULE);
+    CHECK(source_status(&source) == VC_TARGET_STATUS_OK);
     set_valid_source(&source);
     source.modules[0].load_generation = 0;
     CHECK(source_status(&source) ==

@@ -139,6 +139,22 @@ typedef struct vc_menu_coordinator_state {
     bool menu_authority_active;
 } vc_menu_coordinator_state;
 
+/*
+ * Trusted, read-only proof of one acknowledged menu-open lineage. It exposes
+ * no thread IDs or memory addresses and cannot create or extend authority.
+ */
+typedef struct vc_menu_open_lineage {
+    vc_launch_claimant_identity_snapshot target;
+    vc_launch_open_authorization authorization;
+    vc_menu_open_lease lease;
+    uint64_t target_snapshot_revision;
+    uint64_t allowlist_revision;
+    uint64_t coordinator_lifecycle_generation;
+    uint64_t pause_generation;
+    uint64_t started_ms;
+    uint64_t deadline_ms;
+} vc_menu_open_lineage;
+
 typedef struct vc_menu_coordinator {
     vc_menu_coordinator_dependencies dependencies;
     vc_launch_claimant *claimant;
@@ -287,6 +303,16 @@ vc_menu_coordinator_status vc_menu_coordinator_get_status(
 vc_menu_coordinator_result vc_menu_coordinator_get_state(
     vc_menu_coordinator *coordinator,
     vc_menu_coordinator_state *state);
+
+vc_menu_coordinator_result vc_menu_coordinator_inspect_open_lineage(
+    vc_menu_coordinator *coordinator,
+    uint64_t now_ms,
+    vc_menu_open_lineage *lineage);
+
+vc_menu_coordinator_result vc_menu_coordinator_validate_open_lineage(
+    vc_menu_coordinator *coordinator,
+    uint64_t now_ms,
+    const vc_menu_open_lineage *lineage);
 
 /*
  * Returns the complete text length excluding NUL. Output is always terminated

@@ -34,6 +34,10 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
       title/version/fingerprint/module policy matching, module/segment lookup,
       explicit thread ownership checks, and symbolic permission-scoped range
       validation.
+- [x] Allocation-free read-only memory-service contract with a separate v1
+      ABI, trusted active-menu lineage, exact caller/target/snapshot binding,
+      symbolic module/segment/offset reads, finite quotas, post-read race
+      checks, and idempotent copy-out recovery.
 - [x] Add sanitizer, fuzz, and property-based CI coverage.
 - [ ] Add snapshot/session file formats with strict version and size limits.
 
@@ -78,8 +82,10 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
 - [ ] Enumerate allowlisted user processes, modules, and readable regions.
 - [ ] Implement a documented native adapter that supplies authoritative
       process/module/thread generations and measured build fingerprints.
-- [ ] Capture foreign-process bytes through a separately reviewed read-only
-      memory service.
+- [x] Implement and host-test the portable bounded read-only memory service
+      against synthetic target memory without adding a native syscall.
+- [ ] Pin, review, and hardware-gate an attested native transport and safe
+      target-read adapter before capturing foreign-process bytes.
 - [x] Reconcile trusted catalog addresses into verified module/segment-relative
       symbolic offsets without dereferencing them.
 - [x] Add portable lifecycle tests for app exit, relaunch, PID reuse,
@@ -184,6 +190,9 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
 - [x] Implement the portable menu owner that consumes one claimant
       authorization, validates a caller-supplied allowlist and protected set,
       owns pause/resume, and enforces a finite nonextending menu lease.
+- [x] Implement the separate portable read-only service/ABI, bound to exact
+      open-menu lineage and immutable attestation revisions, without widening
+      launch-only v1 or adding writes.
 - [ ] Resolve the missing public QuickMenuReborn runtime-version probe and
       implement an attested SceShell-to-kernel transport before adding the
       optional native `.suprx` target.

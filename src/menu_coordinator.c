@@ -2227,6 +2227,117 @@ vc_menu_coordinator_result vc_menu_coordinator_get_state(
     return VC_MENU_COORDINATOR_RESULT_OK;
 }
 
+static bool vc_menu_open_lineage_matches(
+    const vc_menu_coordinator *coordinator,
+    const vc_menu_open_lineage *lineage)
+{
+    return vc_menu_identity_equal(
+               &coordinator->target, &lineage->target) &&
+           coordinator->consumed_authorization.value ==
+               lineage->authorization.value &&
+           coordinator->consumed_authorization.lifecycle_generation ==
+               lineage->authorization.lifecycle_generation &&
+           memcmp(&coordinator->lease, &lineage->lease,
+                  sizeof(coordinator->lease)) == 0 &&
+           coordinator->target_snapshot_revision ==
+               lineage->target_snapshot_revision &&
+           coordinator->allowlist_revision ==
+               lineage->allowlist_revision &&
+           coordinator->lifecycle_generation ==
+               lineage->coordinator_lifecycle_generation &&
+           coordinator->pause_generation ==
+               lineage->pause_generation &&
+           coordinator->started_ms == lineage->started_ms &&
+           coordinator->deadline_ms == lineage->deadline_ms;
+}
+
+static bool vc_menu_open_lineage_active(
+    vc_menu_coordinator *coordinator,
+    uint64_t now_ms)
+{
+    return coordinator->phase ==
+               VC_MENU_COORDINATOR_PHASE_RUNNING &&
+           vc_menu_coordinator_get_status(coordinator) ==
+               VC_MENU_COORDINATOR_STATUS_OPEN &&
+           coordinator->menu_authority_active &&
+           coordinator->acknowledged &&
+           coordinator->pause.active &&
+           coordinator->claimant_cleanup_action ==
+               VC_MENU_CLAIMANT_ACTION_NONE &&
+           !coordinator->clear_configuration_pending &&
+           coordinator->last_now_ms <= now_ms &&
+           now_ms < coordinator->deadline_ms &&
+           vc_menu_claimant_authority_matches(
+               coordinator, VC_LAUNCH_CLAIMANT_STATUS_OPEN);
+}
+
+vc_menu_coordinator_result vc_menu_coordinator_inspect_open_lineage(
+    vc_menu_coordinator *coordinator,
+    uint64_t now_ms,
+    vc_menu_open_lineage *lineage)
+{
+    vc_menu_coordinator_result result = vc_menu_enter(coordinator);
+
+    if (result != VC_MENU_COORDINATOR_RESULT_OK) {
+        return result;
+    }
+    if (lineage == NULL) {
+        vc_menu_leave(coordinator);
+        return VC_MENU_COORDINATOR_RESULT_INVALID_ARGUMENT;
+    }
+    memset(lineage, 0, sizeof(*lineage));
+    if (!vc_menu_open_lineage_active(coordinator, now_ms)) {
+        result = coordinator->last_now_ms > now_ms
+                     ? VC_MENU_COORDINATOR_RESULT_CLOCK_ROLLBACK
+                     : VC_MENU_COORDINATOR_RESULT_STALE;
+        vc_menu_leave(coordinator);
+        return result;
+    }
+
+    lineage->target = coordinator->target;
+    lineage->authorization =
+        coordinator->consumed_authorization;
+    lineage->lease = coordinator->lease;
+    lineage->target_snapshot_revision =
+        coordinator->target_snapshot_revision;
+    lineage->allowlist_revision =
+        coordinator->allowlist_revision;
+    lineage->coordinator_lifecycle_generation =
+        coordinator->lifecycle_generation;
+    lineage->pause_generation =
+        coordinator->pause_generation;
+    lineage->started_ms = coordinator->started_ms;
+    lineage->deadline_ms = coordinator->deadline_ms;
+    vc_menu_leave(coordinator);
+    return VC_MENU_COORDINATOR_RESULT_OK;
+}
+
+vc_menu_coordinator_result vc_menu_coordinator_validate_open_lineage(
+    vc_menu_coordinator *coordinator,
+    uint64_t now_ms,
+    const vc_menu_open_lineage *lineage)
+{
+    vc_menu_coordinator_result result = vc_menu_enter(coordinator);
+
+    if (result != VC_MENU_COORDINATOR_RESULT_OK) {
+        return result;
+    }
+    if (lineage == NULL) {
+        vc_menu_leave(coordinator);
+        return VC_MENU_COORDINATOR_RESULT_INVALID_ARGUMENT;
+    }
+    if (!vc_menu_open_lineage_matches(coordinator, lineage) ||
+        !vc_menu_open_lineage_active(coordinator, now_ms)) {
+        result = coordinator->last_now_ms > now_ms
+                     ? VC_MENU_COORDINATOR_RESULT_CLOCK_ROLLBACK
+                     : VC_MENU_COORDINATOR_RESULT_STALE;
+        vc_menu_leave(coordinator);
+        return result;
+    }
+    vc_menu_leave(coordinator);
+    return VC_MENU_COORDINATOR_RESULT_OK;
+}
+
 size_t vc_menu_coordinator_format_status(
     const vc_menu_coordinator *coordinator,
     char *buffer,

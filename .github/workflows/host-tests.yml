@@ -75,3 +75,5 @@ jobs:
         run: ./build-sanitize/vitacheat_menu_coordinator_fuzzer -runs=10000 -max_len=512
       - name: Run bounded target attestation fuzzer
         run: ./build-sanitize/vitacheat_target_attestation_fuzzer -runs=10000 -max_len=640
+      - name: Run bounded memory service fuzzer
+        run: ./build-sanitize/vitacheat_memory_service_fuzzer -runs=10000 -max_len=640

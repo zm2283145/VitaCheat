@@ -30,6 +30,12 @@ callbacks, detects mutation, validates the complete candidate, and publishes
 only immutable local revisions. Its range API returns symbolic
 module/segment/offset metadata and never dereferences an address.
 
+The portable memory service adds a separate read-only v1 ABI and can invoke
+only an injected bounded target-read callback. It has no native syscall,
+transport, process discovery, write, patch, freeze, scan, hook, or hardware
+implementation. Host tests use synthetic `PCSA00133` module/segment bytes and
+placeholder fingerprint facts, not measured device data.
+
 ## Authority model
 
 - Read discovery, snapshot capture, writes, and persistent freezes are separate
@@ -173,7 +179,9 @@ The portable broker/ABI, launch-only service policy, add-on controller, game
 claimant/open-authorization lifecycle, and authorization-to-pause/menu-lease
 coordinator are implemented. The portable target snapshot, exact build/module
 policy, thread ownership query, and checked symbolic range foundation are also
-implemented, including an optional coordinator revision gate. Native
+implemented, including an optional coordinator revision gate. The portable
+bounded read-only ABI/service is implemented as a separate namespace without
+widening launch v1. Native
 QuickMenuReborn widgets remain blocked because the pinned public API has no
 runtime version query, and native service transport remains blocked because
 QuickMenuReborn documents no kernel bridge. Public taiHEN lifecycle/hook APIs
@@ -182,8 +190,9 @@ overlay, universal presentation, process/module load generations, measured
 fingerprints, segment catalog, or title-specific gameplay-thread facts.
 SceShell hooks, Vita service syscalls/exports, concrete caller identity
 derivation, native injection, renderer/input/menu hooks, allowlist acquisition,
-read-only memory access, and cleanup hardware gates remain unavailable; no
-firmware-offset fallback is permitted.
+the attested read transport/target-memory adapter, measured manifests, and
+cleanup hardware gates remain unavailable; no firmware-offset fallback is
+permitted.
 
 ## Menu pause rules
 
@@ -202,14 +211,37 @@ firmware-offset fallback is permitted.
 
 ## Memory rules
 
-- Trusted modules and segments must be enumerated into one complete immutable
-  snapshot before any future access.
-- The portable resolver already rejects zero lengths, 32-bit end overflow,
+- Trusted modules and segments are enumerated into one complete immutable
+  snapshot before any portable read.
+- The portable resolver rejects zero lengths, 32-bit end overflow,
   cross-segment spans, holes, stale revisions/load generations, unknown
   permission bits, and insufficient permissions before returning symbolic
   module/segment/offset metadata.
-- A future memory service must consume that checked metadata and independently
-  preserve exact snapshot lineage; the current API performs no read or write.
+- The separate memory ABI accepts only exact 80-byte little-endian
+  game-plugin `READ`/`STATUS` requests carrying `READ_TARGET`. It contains no
+  host pointer, absolute address, write payload, or generic operation and
+  returns at most 256 payload bytes behind a checked 64-byte response header.
+- User requests cannot mint authority. Trusted activation requires the exact
+  acknowledged coordinator `OPEN` lineage and immutable target snapshot, then
+  creates one opaque nonrepeating session bound to caller, target, attestation,
+  coordinator/service lifecycle, fixed deadline, and finite byte/operation
+  budgets.
+- Every request reattests the caller and revalidates session, foreground,
+  target snapshot, module/load generation, exact segment, permissions, range,
+  deadline, and remaining quota. Every fully authenticated request consumes
+  operation quota even when its range is denied; reads and status never extend
+  authority.
+- One bounded adapter read is followed by exact byte-count and trusted
+  generation/revision checks plus a second lineage/foreground/snapshot
+  validation. Faults, short or over-reported reads, and mutation scrub the
+  payload and cannot succeed partially.
+- Copy-out failure retains one initialized response keyed to exact request
+  bytes, trusted caller, target, lineage, and service lifecycle. Exact retry
+  cannot repeat a successful read; unrelated requests are blocked. Every
+  revocation path scrubs the journal and session.
+- The service uses a nonblocking atomic gate, invokes adapters outside that
+  gate under reentry exclusion, performs no allocation, wait, retry loop, or
+  unbounded tick work, and emits only non-sensitive coarse status text.
 - Cheats use typed, module-relative operations rather than unbounded scripts.
 - Exact title and any required version, opaque measured fingerprint, and module
   load-generation facts must match before reads are interpreted or writes are
