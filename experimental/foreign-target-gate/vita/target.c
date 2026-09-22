@@ -1,5 +1,6 @@
 #include "fixture_protocol.h"
 #include "vitacheat/foreign_target_gate.h"
+#include "vitacheat/foreign_target_startup.h"
 
 #include <psp2/appmgr.h>
 #include <psp2/ctrl.h>
@@ -22,7 +23,7 @@ static const uint8_t g_foreign_sentinel[VC_FTG_MAX_READ]
     __attribute__((aligned(64), used)) =
         VC_FTG_SENTINEL_BYTES;
 
-static bool write_all(
+static int write_all(
     SceUID fd,
     const void *buffer,
     size_t size)
@@ -33,20 +34,24 @@ static bool write_all(
         const SceSSize written = sceIoWrite(
             fd, bytes, (SceSize)size);
 
-        if (written <= 0) {
-            return false;
+        if (written < 0) {
+            return (int)written;
+        }
+        if (written == 0) {
+            return VC_FTG_STARTUP_STATUS_ZERO_WRITE;
         }
         bytes += written;
         size -= (size_t)written;
     }
-    return true;
+    return 0;
 }
 
-static bool find_sentinel(
+static int find_sentinel(
     vc_ftg_fixture_layout *layout)
 {
     SceKernelModuleInfo module;
     SceUID module_id;
+    int result;
     const uintptr_t sentinel_begin =
         (uintptr_t)g_foreign_sentinel;
     const uintptr_t sentinel_end =
@@ -57,9 +62,14 @@ static bool find_sentinel(
     module.size = sizeof(module);
     module_id = sceKernelGetModuleIdByAddr(
         (void *)g_foreign_sentinel);
-    if (module_id <= 0 ||
-        sceKernelGetModuleInfo(module_id, &module) < 0) {
-        return false;
+    if (module_id <= 0) {
+        return module_id < 0
+            ? (int)module_id
+            : VC_FTG_STARTUP_STATUS_SENTINEL_NOT_FOUND;
+    }
+    result = sceKernelGetModuleInfo(module_id, &module);
+    if (result < 0) {
+        return result;
     }
     for (index = 0u; index < VC_FTG_MAX_SEGMENTS; ++index) {
         const uintptr_t begin =
@@ -86,32 +96,34 @@ static bool find_sentinel(
                 (uint32_t)(sentinel_begin - begin);
             layout->sentinel_size =
                 sizeof(g_foreign_sentinel);
-            return true;
+            return 0;
         }
     }
-    return false;
+    return VC_FTG_STARTUP_STATUS_SENTINEL_NOT_FOUND;
 }
 
-static bool write_layout(
+static int write_layout(
     const vc_ftg_fixture_layout *layout)
 {
     const SceUID fd = sceIoOpen(
         VC_FTG_LAYOUT_PATH,
         SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC,
         0666);
-    bool result;
+    int result;
+    int close_result;
 
     if (fd < 0) {
-        return false;
+        return (int)fd;
     }
     result = write_all(fd, layout, sizeof(*layout));
-    if (sceIoClose(fd) < 0) {
-        result = false;
+    close_result = sceIoClose(fd);
+    if (result == 0 && close_result < 0) {
+        result = close_result;
     }
     return result;
 }
 
-static void write_fixture_result(
+static int write_fixture_result(
     bool layout_ok,
     int wrong_caller_result,
     int launch_result)
@@ -122,9 +134,11 @@ static void write_fixture_result(
         SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC,
         0666);
     int size;
+    int result = VC_FTG_STARTUP_STATUS_FORMAT_FAILED;
+    int close_result;
 
     if (fd < 0) {
-        return;
+        return (int)fd;
     }
     size = snprintf(
         json,
@@ -144,9 +158,43 @@ static void write_fixture_result(
         wrong_caller_result,
         launch_result);
     if (size > 0 && (size_t)size < sizeof(json)) {
-        (void)write_all(fd, json, (size_t)size);
+        result = write_all(fd, json, (size_t)size);
     }
-    (void)sceIoClose(fd);
+    close_result = sceIoClose(fd);
+    if (result == 0 && close_result < 0) {
+        result = close_result;
+    }
+    memset(json, 0, sizeof(json));
+    return result;
+}
+
+static int write_startup_record(
+    vc_ftg_startup_record *record)
+{
+    uint8_t encoded[VC_FTG_STARTUP_RECORD_SIZE];
+    SceUID fd;
+    int result;
+    int close_result;
+
+    memset(encoded, 0, sizeof(encoded));
+    if (!vc_ftg_startup_record_encode(record, encoded)) {
+        return VC_FTG_STARTUP_STATUS_FORMAT_FAILED;
+    }
+    fd = sceIoOpen(
+        VC_FTG_STARTUP_PATH,
+        SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC,
+        0666);
+    if (fd < 0) {
+        memset(encoded, 0, sizeof(encoded));
+        return (int)fd;
+    }
+    result = write_all(fd, encoded, sizeof(encoded));
+    close_result = sceIoClose(fd);
+    if (result == 0 && close_result < 0) {
+        result = close_result;
+    }
+    memset(encoded, 0, sizeof(encoded));
+    return result;
 }
 
 static int wrong_caller_open(void)
@@ -164,19 +212,59 @@ static int wrong_caller_open(void)
 
 int main(void)
 {
+    vc_ftg_startup_record startup;
     vc_ftg_fixture_layout layout;
     SceCtrlData pad;
     bool layout_ok;
+    bool input_consumed = false;
+    int sentinel_result;
     int caller_result;
+    int layout_result;
+    int fixture_result;
     int launch_result = 0;
 
+    vc_ftg_startup_record_init(&startup);
+    if (write_startup_record(&startup) < 0) {
+        return 1;
+    }
     memset(&layout, 0, sizeof(layout));
-    layout_ok = find_sentinel(&layout);
+    sentinel_result = find_sentinel(&layout);
+    if (!vc_ftg_startup_record_complete(
+            &startup,
+            VC_FTG_STARTUP_STAGE_SENTINEL_LOOKUP_COMPLETE,
+            sentinel_result) ||
+        write_startup_record(&startup) < 0) {
+        return 1;
+    }
     caller_result = wrong_caller_open();
+    if (!vc_ftg_startup_record_complete(
+            &startup,
+            VC_FTG_STARTUP_STAGE_WRONG_CALLER_OPEN_COMPLETE,
+            caller_result) ||
+        write_startup_record(&startup) < 0) {
+        return 1;
+    }
     layout.wrong_caller_open_result = caller_result;
-    layout_ok = layout_ok && write_layout(&layout);
-    write_fixture_result(
+    layout_result = sentinel_result == 0
+        ? write_layout(&layout)
+        : VC_FTG_STARTUP_STATUS_SKIPPED;
+    layout_ok = sentinel_result == 0 && layout_result == 0;
+    if (!vc_ftg_startup_record_complete(
+            &startup,
+            VC_FTG_STARTUP_STAGE_LAYOUT_WRITE_COMPLETE,
+            layout_result) ||
+        write_startup_record(&startup) < 0) {
+        return 1;
+    }
+    fixture_result = write_fixture_result(
         layout_ok, caller_result, launch_result);
+    if (!vc_ftg_startup_record_complete(
+            &startup,
+            VC_FTG_STARTUP_STAGE_FIXTURE_WRITE_COMPLETE,
+            fixture_result) ||
+        write_startup_record(&startup) < 0) {
+        return 1;
+    }
     sceClibPrintf(
         "VCFG target layout=%s wrong_caller=%d\n",
         layout_ok ? "ready" : "failed",
@@ -184,23 +272,45 @@ int main(void)
     sceClibPrintf(
         "VCFG target press X to launch controller %s\n",
         VITACHEAT_FOREIGN_GATE_CONTROLLER_TITLE_ID);
-    (void)sceCtrlSetSamplingMode(
-        SCE_CTRL_MODE_ANALOG_WIDE);
+    if (sceCtrlSetSamplingMode(
+            SCE_CTRL_MODE_ANALOG_WIDE) < 0 ||
+        !vc_ftg_startup_record_mark(
+            &startup,
+            VC_FTG_STARTUP_STAGE_PROMPT_READY) ||
+        write_startup_record(&startup) < 0) {
+        return 1;
+    }
     for (;;) {
         memset(&pad, 0, sizeof(pad));
-        if (sceCtrlPeekBufferPositive(0, &pad, 1) > 0 &&
+        if (!input_consumed &&
+            sceCtrlPeekBufferPositive(0, &pad, 1) > 0 &&
             (pad.buttons & SCE_CTRL_CROSS) != 0u) {
+            if (!vc_ftg_startup_record_mark(
+                    &startup,
+                    VC_FTG_STARTUP_STAGE_CROSS_OBSERVED) ||
+                write_startup_record(&startup) < 0) {
+                return 1;
+            }
             launch_result = sceAppMgrLaunchAppByUri(
                 0x20000,
                 "psgm:play?titleid="
                 VITACHEAT_FOREIGN_GATE_CONTROLLER_TITLE_ID);
-            write_fixture_result(
+            if (!vc_ftg_startup_record_complete(
+                    &startup,
+                    VC_FTG_STARTUP_STAGE_CONTROLLER_LAUNCH_COMPLETE,
+                    launch_result) ||
+                write_startup_record(&startup) < 0) {
+                return 1;
+            }
+            fixture_result = write_fixture_result(
                 layout_ok,
                 caller_result,
                 launch_result);
             sceClibPrintf(
-                "VCFG target controller_launch=%d\n",
-                launch_result);
+                "VCFG target controller_launch=%d fixture_write=%d\n",
+                launch_result,
+                fixture_result);
+            input_consumed = true;
             (void)sceKernelDelayThread(UINT32_C(500000));
         } else {
             (void)sceKernelDelayThread(UINT32_C(50000));

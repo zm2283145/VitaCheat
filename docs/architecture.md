@@ -400,10 +400,15 @@ permanent fail-closed latch, and a raced response is scrubbed before the
 blocked caller returns.
 
 The full host state machine and strict VitaSDK artifacts build successfully,
-but the Vita layer has no device result. `SceProcEventForDriver` callback
-ordering and unregister quiescence, two-homebrew suspend/resume residency, and
-foreign-target copying are therefore explicit hardware-gate questions. A
-pre-registration target receives no generation and cannot be opened; an
+but its first Vita attempt stopped before input/read at an early target-start
+observability gap. The source-owned target now publishes an 80-byte
+integrity-checked diagnostic record from `main-entered` through
+`controller-launch-complete`; the controller truncates and verifies it empty
+before each launch. That record contains no kernel identity and cannot advance
+the registry or authorize open/read. `SceProcEventForDriver` callback ordering
+and unregister quiescence, two-homebrew suspend/resume residency, and
+foreign-target copying are therefore still explicit hardware-gate questions.
+A pre-registration target receives no generation and cannot be opened; an
 out-of-order later start fails closed. Runtime unload is not a recovery path.
 See `docs/foreign-target-generation-gate.md`.
 

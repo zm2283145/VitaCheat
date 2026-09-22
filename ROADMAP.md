@@ -99,6 +99,11 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
 - [ ] Run the guarded `VCFT00001`/`VCFC00001` foreign-target gate on owned
       retail 3.65 hardware and retain the exact result, artifact hashes,
       process-event ordering, suspend/resume residency, and restoration proof.
+      The first attempt stopped fail closed before input/read because no target
+      artifact became observable. An integrity-checked diagnostic-only startup
+      record now identifies progress from `main` entry through prompt/return;
+      it does not substitute for kernel `TARGET_STARTED` and awaits a separately
+      authorized rerun.
 - [ ] Design, review, and hardware-gate strong foreign-process attestation and
       a production target-read adapter before capturing any foreign bytes.
 - [x] Reconcile trusted catalog addresses into verified module/segment-relative

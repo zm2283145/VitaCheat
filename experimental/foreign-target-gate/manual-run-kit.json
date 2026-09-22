@@ -1,7 +1,8 @@
 {
-  "schema": "vitacheat.foreign-target-gate.manual-run.v1",
+  "schema": "vitacheat.foreign-target-gate.manual-run.v2",
   "base": {
     "native_read_gate_commit": "1233c08656a1c219d8de0fd7dde1257986ed3a97",
+    "foreign_generation_gate_parent": "69788273460db9649349c8ec98aab00744649c6b",
     "device_tested_parent_commit": "8d74fad289b050e122c2656c0953da43aadef533",
     "device_tested_parent_result_sha256": "04563275cb1fc45398f1100f4ea9c1aa4874844c7f73db0d7cf7faf0f4b635bc"
   },
@@ -29,13 +30,13 @@
     },
     {
       "name": "vitacheat-foreign-target-fixture.vpk",
-      "bytes": 5234,
-      "sha256": "9966d0fca2e967725dc3b1a5bd5152a48de827629ee2b92d21d4c54ab29e4b7c"
+      "bytes": 6503,
+      "sha256": "fbd4cae8c124674c0b4f802a051e0facc3b815776df2d5893aee2318d30fd881"
     },
     {
       "name": "vitacheat-foreign-target-controller.vpk",
-      "bytes": 7105,
-      "sha256": "a1ed808a8c9c2db89a5d146e97836aec370136e8a73a7da736eeb8ef35d3a303"
+      "bytes": 7366,
+      "sha256": "96a323438b322aa20954e62b3bae303ef883776dd57d9208d0f1a95137c141b3"
     },
     {
       "name": "libVitaCheatForeignGate_stub.a",
@@ -47,41 +48,193 @@
     "symbol-inventory.txt",
     "artifact-inventory.txt"
   ],
+  "startup_stage": {
+    "path": "ux0:data/vitacheat-foreign-target-startup.bin",
+    "bytes": 80,
+    "encoding": "fixed little-endian",
+    "magic": "0x53544731",
+    "version": 1,
+    "build_id_hex": "564346472d53544147452d5631000000",
+    "title_id": "VCFT00001",
+    "integrity": "FNV-1a-32 over bytes 0 through 75, stored little-endian at bytes 76 through 79",
+    "authority": "diagnostic-only; never process-event, generation, module, handle, or read authority",
+    "freshness": "controller truncates this exact path and verifies a zero-byte read before each target launch",
+    "stages": [
+      {
+        "code": 1,
+        "name": "main-entered",
+        "meaning": "target main entered and published before module introspection or a gate syscall"
+      },
+      {
+        "code": 2,
+        "name": "sentinel-lookup-complete",
+        "meaning": "self-module/sentinel lookup returned; inspect sentinel_lookup_result"
+      },
+      {
+        "code": 3,
+        "name": "wrong-caller-open-complete",
+        "meaning": "target-side OpenExactFixture returned; expected code is -12"
+      },
+      {
+        "code": 4,
+        "name": "layout-write-complete",
+        "meaning": "layout write completed or was explicitly skipped after lookup failure"
+      },
+      {
+        "code": 5,
+        "name": "fixture-write-complete",
+        "meaning": "initial fixture JSON write returned"
+      },
+      {
+        "code": 6,
+        "name": "prompt-ready",
+        "meaning": "all pre-input target work completed and input sampling was configured"
+      },
+      {
+        "code": 7,
+        "name": "cross-observed",
+        "meaning": "the target observed the single bounded X press; controller launch has not yet returned"
+      },
+      {
+        "code": 8,
+        "name": "controller-launch-complete",
+        "meaning": "the target's controller-resume launch call returned; inspect controller_launch_result"
+      }
+    ],
+    "local_status_codes": {
+      "-4601": "operation deliberately skipped after an earlier diagnostic failure",
+      "-4602": "self module was available but the sentinel was not found in a bounded segment",
+      "-4603": "a file write returned zero before the fixed payload completed",
+      "-4604": "a bounded record or fixture serialization failed"
+    },
+    "forbidden_fields": [
+      "PID",
+      "process generation",
+      "lifecycle revision",
+      "module UID",
+      "fingerprint",
+      "raw address",
+      "segment base",
+      "key material"
+    ]
+  },
   "install": {
     "automatic_deployment": false,
     "kernel_destination": "ux0:tai/vitacheat-foreign-target-gate.skprx",
     "kernel_config_line": "ux0:tai/vitacheat-foreign-target-gate.skprx",
     "requires_reboot_before_apps": true
   },
+  "prelaunch_freshness": [
+    "Before each generation the controller truncates and verifies zero bytes at ux0:data/vitacheat-foreign-target-layout.bin.",
+    "Before each generation the controller truncates and verifies zero bytes at ux0:data/vitacheat-foreign-target-startup.bin.",
+    "Before each generation the controller truncates and verifies zero bytes at ux0:data/vitacheat-foreign-target-fixture.json.",
+    "Any cleanup/open/close/readback failure is recorded and stops before launch."
+  ],
   "run": [
     "Launch VCFC00001 before VCFT00001.",
-    "Allow the controller to verify target-unavailable and launch VCFT00001.",
-    "In VCFT00001 press X once to launch or resume VCFC00001.",
-    "Allow VCFC00001 to read, destroy only VCFT00001, and verify the stale handle.",
-    "Allow VCFC00001 to relaunch VCFT00001.",
-    "In the relaunched VCFT00001 press X once.",
-    "Retrieve both JSON results and all serial lines beginning VCFG."
+    "Allow the controller to verify target-unavailable, clear all three target evidence paths, and launch VCFT00001.",
+    "Poll the startup-stage path read-only. Preserve every distinct invalid/partial byte sequence and continue polling without input.",
+    "Require one complete valid prompt-ready record with exact build/title/schema identity, sentinel result 0, wrong-caller result -12, layout result 0, and fixture result 0.",
+    "Require the exact 32-byte layout and complete fixture JSON independently; the startup record alone is never target-start or read authority.",
+    "Send exactly one documented bounded input: press cross; wait 100ms; release cross.",
+    "Allow VCFC00001 to require kernel TARGET_STARTED, read, destroy only VCFT00001, and verify the stale handle.",
+    "Allow VCFC00001 to clear all three target evidence paths and relaunch VCFT00001.",
+    "Repeat the prompt-ready validation and one bounded X input for generation 2.",
+    "Retrieve controller JSON, fixture JSON, startup records/partials, layouts, and all available serial lines beginning VCFG."
+  ],
+  "expected_tests": [
+    "status-ready",
+    "controller-before-target-unavailable",
+    "clear-fixture-layout",
+    "clear-startup-stage",
+    "clear-fixture-result",
+    "launch-target",
+    "target-start-observed",
+    "fixture-layout",
+    "open-exact-fixture",
+    "read-zero-rejected",
+    "read-one-exact",
+    "read-sixty-three-exact",
+    "read-sixty-four-exact",
+    "read-sixty-five-rejected",
+    "range-overflow-rejected",
+    "invalid-handle-rejected",
+    "bad-output-pointer-rejected",
+    "destroy-source-owned-target",
+    "target-exit-observed",
+    "stale-handle-after-exit-rejected",
+    "clear-fixture-layout-before-relaunch",
+    "clear-startup-stage-before-relaunch",
+    "clear-fixture-result-before-relaunch",
+    "relaunch-target",
+    "target-relaunch-observed",
+    "fixture-layout-after-relaunch",
+    "old-handle-after-relaunch-rejected",
+    "open-relaunched-fixture",
+    "relaunch-read-sixty-four-exact",
+    "close"
+  ],
+  "second_run_stop_matrix": [
+    {
+      "observation": "startup path absent or zero bytes through timeout",
+      "conclusion": "no successful main-entered publication; target main entry and process-event delivery both remain unproven",
+      "action": "send no input and stop"
+    },
+    {
+      "observation": "startup bytes are partial, wrong-sized, corrupt, or malformed",
+      "conclusion": "an in-place update or write fault was observed; no stage may be inferred",
+      "action": "preserve every distinct byte sequence, poll read-only until timeout, send no input"
+    },
+    {
+      "observation": "valid stage 1 through 5",
+      "conclusion": "the named target boundary completed; the next boundary did not publish",
+      "action": "preserve the record and related files, send no input, stop at timeout"
+    },
+    {
+      "observation": "valid stage 6 with any unexpected result field",
+      "conclusion": "prompt-ready identity is valid but a prerequisite failed",
+      "action": "send no input and stop"
+    },
+    {
+      "observation": "valid stage 6 with results 0, -12, 0, 0",
+      "conclusion": "source-owned target is ready for one bounded X; process-event generation is still unproven",
+      "action": "also validate layout and fixture JSON, then allow exactly one bounded X"
+    },
+    {
+      "observation": "valid stage 7 persists",
+      "conclusion": "X was observed but the target's controller launch call did not return",
+      "action": "do not repeat input; preserve and stop at timeout"
+    },
+    {
+      "observation": "valid stage 8",
+      "conclusion": "controller launch returned with the recorded code; process-event generation is still proven only by the resumed controller's kernel status test",
+      "action": "do not relaunch or repeat input; follow controller result read-only"
+    }
   ],
   "results": [
     "ux0:data/vitacheat-foreign-target-result.json",
-    "ux0:data/vitacheat-foreign-target-fixture.json"
+    "ux0:data/vitacheat-foreign-target-fixture.json",
+    "ux0:data/vitacheat-foreign-target-startup.bin",
+    "ux0:data/vitacheat-foreign-target-layout.bin"
   ],
   "stop_conditions": [
     "any failed test",
     "fail-closed or API-mismatch status",
-    "unexpected title or syscall code",
-    "missing or truncated result",
-    "hang or reboot"
+    "unexpected title, build identity, schema, stage, integrity, or syscall code",
+    "missing, stale, corrupt, or truncated required evidence",
+    "hang, reboot, service loss, or callback anomaly",
+    "generation mismatch or unexpected relaunch"
   ],
   "recovery": [
     "Hold L during boot to bypass taiHEN plugin loading if necessary.",
     "Remove only the exact kernel config line.",
     "Delete only ux0:tai/vitacheat-foreign-target-gate.skprx.",
-    "Remove VCFT00001 and VCFC00001.",
+    "Remove VCFT00001 and VCFC00001 normally through LiveArea.",
     "Reboot twice and verify normal operation."
   ],
   "claims": {
-    "device_executed": false,
+    "device_executed_for_this_revision": false,
+    "startup_marker_is_authority": false,
     "retail_games": false,
     "writes": false,
     "injection": false,

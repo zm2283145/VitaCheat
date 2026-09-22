@@ -163,6 +163,7 @@ add_custom_target(foreign-gate-stubs
 
 add_executable(VitaCheatFtTarget
     target.c
+    "${FOREIGN_GATE_ROOT}/src/foreign_target_startup.c"
 )
 add_dependencies(VitaCheatFtTarget foreign-gate-stubs)
 target_include_directories(VitaCheatFtTarget

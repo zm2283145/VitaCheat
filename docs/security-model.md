@@ -64,9 +64,14 @@ already proven fixed bounce chain. User mode cannot provide an authoritative
 PID, title, module UID, fingerprint, generation, revision, or address.
 
 The foreign gate is currently host- and Vita-cross-build validated only. Its
-process-event ordering, two-VPK suspend/resume residency, foreign-copy
-behavior, and unregister quiescence have no device result. A pre-registration
-fixture is never reconciled into authority; it stays unavailable, and any
+first device attempt stopped before input/read when no target artifact became
+observable, and therefore did not prove process-event ordering, two-VPK
+suspend/resume residency, foreign-copy behavior, or unregister quiescence. An
+80-byte source-owned startup record now exposes only bounded target progress
+and return codes. It contains no PID, generation, revision, module identity,
+fingerprint, or address; controller-side truncation provides freshness, and
+FNV integrity rejects partial/malformed reads. It never reconciles or
+authorizes a process. A pre-registration fixture remains unavailable, and any
 later start without a matching create fails closed. The manual protocol
 requires boot registration and reboot cleanup. None of this grants the
 portable production service a native adapter.
@@ -333,10 +338,15 @@ does not satisfy any of those requirements.
 - The source is allocation-free and has no write, injection, hook, pause,
   search, network, raw PID/address, retail-title, private-NID, or runtime
   deployment path.
+- The target startup-stage file is diagnostic only. It is truncated and
+  verified empty before each launch, excludes kernel identity/address fields,
+  and can never satisfy the controller's mandatory kernel `TARGET_STARTED`
+  check or authorize an open/read.
 - Stop unregisters the stored callback UID but always refuses runtime unload
   after a successful registration; reboot is mandatory because VitaSDK does
   not document callback drain semantics.
-- No device pass exists yet. See
+- No device pass exists yet; the first attempt stopped before input/read and
+  the diagnostic revision has not been run. See
   `docs/foreign-target-generation-gate.md` for the exact non-claims and manual
   protocol.
 

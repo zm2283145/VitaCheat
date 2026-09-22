@@ -1,4 +1,5 @@
 #include "vitacheat/foreign_target_gate.h"
+#include "vitacheat/foreign_target_startup.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -165,6 +166,76 @@ static uint64_t fuzz_u64(
     return value;
 }
 
+static void fuzz_startup_protocol(
+    const uint8_t *data,
+    size_t size)
+{
+    vc_ftg_startup_record record;
+    vc_ftg_startup_record decoded;
+    uint8_t encoded[VC_FTG_STARTUP_RECORD_SIZE];
+    const int32_t result = (int32_t)fuzz_u64(data, size);
+    const uint8_t final_stage =
+        size == 0u ? 0u : (uint8_t)(data[0] % 8u);
+
+    if (vc_ftg_startup_record_decode(data, size, &decoded)) {
+        fuzz_check(vc_ftg_startup_record_encode(
+            &decoded, encoded));
+        fuzz_check(memcmp(encoded, data, sizeof(encoded)) == 0);
+    }
+
+    vc_ftg_startup_record_init(&record);
+    if (final_stage >= 1u) {
+        fuzz_check(vc_ftg_startup_record_complete(
+            &record,
+            VC_FTG_STARTUP_STAGE_SENTINEL_LOOKUP_COMPLETE,
+            result));
+    }
+    if (final_stage >= 2u) {
+        fuzz_check(vc_ftg_startup_record_complete(
+            &record,
+            VC_FTG_STARTUP_STAGE_WRONG_CALLER_OPEN_COMPLETE,
+            result));
+    }
+    if (final_stage >= 3u) {
+        fuzz_check(vc_ftg_startup_record_complete(
+            &record,
+            VC_FTG_STARTUP_STAGE_LAYOUT_WRITE_COMPLETE,
+            result));
+    }
+    if (final_stage >= 4u) {
+        fuzz_check(vc_ftg_startup_record_complete(
+            &record,
+            VC_FTG_STARTUP_STAGE_FIXTURE_WRITE_COMPLETE,
+            result));
+    }
+    if (final_stage >= 5u) {
+        fuzz_check(vc_ftg_startup_record_mark(
+            &record, VC_FTG_STARTUP_STAGE_PROMPT_READY));
+    }
+    if (final_stage >= 6u) {
+        fuzz_check(vc_ftg_startup_record_mark(
+            &record, VC_FTG_STARTUP_STAGE_CROSS_OBSERVED));
+    }
+    if (final_stage >= 7u) {
+        fuzz_check(vc_ftg_startup_record_complete(
+            &record,
+            VC_FTG_STARTUP_STAGE_CONTROLLER_LAUNCH_COMPLETE,
+            result));
+    }
+    fuzz_check(vc_ftg_startup_record_encode(&record, encoded));
+    fuzz_check(vc_ftg_startup_record_decode(
+        encoded, sizeof(encoded), &decoded));
+    fuzz_check(memcmp(&record, &decoded, sizeof(record)) == 0);
+    if (size > 1u) {
+        const size_t corrupt_index =
+            (size_t)data[1] % sizeof(encoded);
+
+        encoded[corrupt_index] ^= UINT8_C(1);
+        fuzz_check(!vc_ftg_startup_record_decode(
+            encoded, sizeof(encoded), &decoded));
+    }
+}
+
 static void fuzz_initialize(
     vc_ftg_service *service,
     vc_ftg_config *config,
@@ -263,6 +334,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     if (size == 0u) {
         return 0;
     }
+    fuzz_startup_protocol(data, size);
     fuzz_initialize(
         &service, &config, &dependencies, &platform);
     for (index = 0u; index < size && index < 32u; ++index) {

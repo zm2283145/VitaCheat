@@ -1,4 +1,5 @@
 #include "vitacheat/foreign_target_gate.h"
+#include "vitacheat/foreign_target_startup.h"
 
 #include <limits.h>
 #include <stdint.h>
@@ -120,6 +121,7 @@ static bool fake_copy_from(
     ++platform->copy_from_calls;
     if (!platform->copies_ok ||
         (process_id != CONTROLLER_PID &&
+         process_id != TARGET_PID &&
          process_id != OTHER_PID) ||
         source == (const void *)(uintptr_t)1u) {
         return false;
@@ -140,6 +142,7 @@ static bool fake_copy_to(
     ++platform->copy_to_calls;
     if (!platform->copies_ok ||
         (process_id != CONTROLLER_PID &&
+         process_id != TARGET_PID &&
          process_id != OTHER_PID) ||
         destination == (void *)(uintptr_t)1u) {
         return false;
@@ -395,6 +398,63 @@ static void test_diagnostic_only_status(void)
               &request,
               &response) ==
           VC_FTG_RESULT_CALLER_TITLE_MISMATCH);
+}
+
+static void test_startup_marker_cannot_authorize(void)
+{
+    fixture fixture_value;
+    vc_ftg_startup_record startup;
+    vc_ftg_open_request request;
+    vc_ftg_open_response response;
+
+    initialize_fixture(&fixture_value, true);
+    vc_ftg_startup_record_init(&startup);
+    CHECK(vc_ftg_startup_record_complete(
+        &startup,
+        VC_FTG_STARTUP_STAGE_SENTINEL_LOOKUP_COMPLETE,
+        0));
+    CHECK(vc_ftg_startup_record_complete(
+        &startup,
+        VC_FTG_STARTUP_STAGE_WRONG_CALLER_OPEN_COMPLETE,
+        VC_FTG_RESULT_CALLER_TITLE_MISMATCH));
+    CHECK(vc_ftg_startup_record_complete(
+        &startup,
+        VC_FTG_STARTUP_STAGE_LAYOUT_WRITE_COMPLETE,
+        0));
+    CHECK(vc_ftg_startup_record_complete(
+        &startup,
+        VC_FTG_STARTUP_STAGE_FIXTURE_WRITE_COMPLETE,
+        0));
+    CHECK(vc_ftg_startup_record_mark(
+        &startup, VC_FTG_STARTUP_STAGE_PROMPT_READY));
+    init_status_request(&request);
+    memset(&response, 0, sizeof(response));
+    CHECK(vc_ftg_service_open_exact_fixture(
+              &fixture_value.service,
+              &request,
+              &response) ==
+          VC_FTG_RESULT_TARGET_UNAVAILABLE);
+    CHECK(!fixture_value.service.session.active);
+
+    CHECK(vc_ftg_service_process_event(
+              &fixture_value.service,
+              VC_FTG_PROCESS_CREATED,
+              TARGET_PID) == VC_FTG_RESULT_OK);
+    CHECK(vc_ftg_service_process_event(
+              &fixture_value.service,
+              VC_FTG_PROCESS_STARTED,
+              TARGET_PID) == VC_FTG_RESULT_OK);
+    CHECK(startup.stage == VC_FTG_STARTUP_STAGE_PROMPT_READY);
+    CHECK(!fixture_value.service.session.active);
+
+    fixture_value.platform.caller_process_id = TARGET_PID;
+    memset(&response, 0, sizeof(response));
+    CHECK(vc_ftg_service_open_exact_fixture(
+              &fixture_value.service,
+              &request,
+              &response) ==
+          VC_FTG_RESULT_CALLER_TITLE_MISMATCH);
+    CHECK(!fixture_value.service.session.active);
 }
 
 static void test_lifecycle_and_exact_reads(void)
@@ -878,6 +938,7 @@ static void test_stop_rejects_stale_callbacks(void)
 int main(void)
 {
     test_diagnostic_only_status();
+    test_startup_marker_cannot_authorize();
     test_lifecycle_and_exact_reads();
     test_exit_relaunch_and_reuse();
     test_module_and_caller_revalidation();

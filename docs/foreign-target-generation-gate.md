@@ -9,11 +9,20 @@ source-owned fixture `VCFT00001`, bind that handle to process-event generation
 and exact main-module identity, and read at most 64 bytes from a symbolic
 fixture segment through `ksceKernelCopyFromUserProc`?
 
-The host model and Vita cross-build are complete. The gate has **not** been
-installed or run on a Vita. Until a guarded retail 3.65 run passes, this work
-does not prove process-event delivery/order, two-VPK suspend/resume residency,
-foreign-process copying, safe unload, a production adapter, or any retail-game
-access.
+The host model and Vita cross-build are complete. One guarded retail 3.65
+attempt reached the controller's successful target-launch request, then
+stopped fail closed because the target produced no observable source-owned
+artifact. No input, handle, or foreign read occurred, and the original device
+configuration was restored byte-exact. Source review proved that the old
+target attempted its layout and fixture writes before X, but only after
+self-module lookup and the wrong-caller syscall. The result therefore exposed
+an early-start observability gap; it did not identify a process-event failure.
+
+This revision adds a diagnostic-only startup-stage record before those
+operations. It has **not** been installed or run on a Vita. Until a guarded
+retail 3.65 rerun passes, this work does not prove process-event
+delivery/order, two-VPK suspend/resume residency, foreign-process copying,
+safe unload, a production adapter, or any retail-game access.
 
 The layer is based exactly on remote `native-read-hardware-gate` commit
 `1233c08656a1c219d8de0fd7dde1257986ed3a97`. Its device-tested parent gate is
@@ -34,13 +43,14 @@ firmware-offset path.
 | target | `VCFT00001` | `VitaCheatFtTarget` | publishes one 64-byte aligned sentinel's segment index/offset, verifies it cannot open the controller capability, and remains visibly alive until X launches the controller |
 | controller | `VCFC00001` | `VitaCheatFtController` | drives status/open/read/exit/relaunch/stale-handle tests; it never sends an authoritative PID, title, module UID, fingerprint, generation, or address |
 
-The target writes only a 32-byte source-owned descriptor containing a magic,
+The target writes a 32-byte source-owned descriptor containing a magic,
 version, segment index, segment-relative offset, sentinel length, and the
-bounded wrong-caller result. The controller truncates the exact descriptor
-path before each target launch, so a failed target write cannot reuse stale
-evidence. This descriptor chooses bytes within the already
-exact-title/exact-module kernel record; it does not authorize a target or
-contain an address.
+bounded wrong-caller result. It also writes the fixed diagnostic startup
+record described below. Before each target launch, the controller truncates
+and reads back zero bytes from the descriptor, startup record, and fixture
+JSON. Any open, truncate, close, or readback failure stops before launch. The
+descriptor chooses bytes within the already exact-title/exact-module kernel
+record; neither file authorizes a target or contains an address.
 
 The controller uses documented `sceAppMgrLaunchAppByUri` to launch the fixture.
 The fixture uses the same API to return to the controller. The controller uses
@@ -49,6 +59,48 @@ documented `sceAppMgrDestroyAppByName` only for the exact compile-time
 suspend/resume application lifecycle without injecting code or adding a
 background service. If the device closes rather than suspends either app, the
 gate stops and records failure; process survival is not assumed.
+
+## Diagnostic startup-stage record
+
+`ux0:data/vitacheat-foreign-target-startup.bin` is an 80-byte canonical
+little-endian record. Its magic is `0x53544731`, version is `1`, target is
+`VCFT00001`, and the 16-byte source identity is
+`564346472d53544147452d5631000000` (`VCFG-STAGE-V1` plus zero padding).
+Bytes 76-79 contain little-endian FNV-1a-32 over bytes 0-75. The integrity
+field detects partial or malformed in-place observations; it is not a
+signature or authority.
+
+The record contains only the stage, a completed-result mask, and bounded
+return/status codes. It deliberately contains no PID, process generation,
+lifecycle revision, module UID, fingerprint, raw address, segment base, key
+material, or unrelated device fact.
+
+| Stage | Name | Last completed boundary |
+|---:|---|---|
+| 1 | `main-entered` | `main` published before module introspection or any gate syscall |
+| 2 | `sentinel-lookup-complete` | self-module/sentinel lookup returned |
+| 3 | `wrong-caller-open-complete` | target-side `OpenExactFixture` returned |
+| 4 | `layout-write-complete` | descriptor write returned or was explicitly skipped |
+| 5 | `fixture-write-complete` | initial fixture JSON write returned |
+| 6 | `prompt-ready` | all pre-input work completed and input sampling was configured |
+| 7 | `cross-observed` | one X was observed; controller launch had not returned |
+| 8 | `controller-launch-complete` | the controller-resume launch call returned |
+
+Results use raw non-sensitive API/I/O return values where available. Local
+codes are `-4601` for deliberately skipped, `-4602` for sentinel not found,
+`-4603` for a zero-length incomplete write, and `-4604` for bounded
+serialization failure. A valid prompt-ready record for the normal path has
+sentinel `0`, wrong-caller `-12`, layout `0`, and fixture `0`.
+
+The target rewrites the record in place and closes the file after every
+complete fixed payload. A read-only operator must preserve each distinct
+wrong-sized or integrity-invalid observation as a partial and continue polling
+without input until a complete record or timeout. Only stage 6 with the exact
+expected results, plus the independent 32-byte layout and fixture JSON, permits
+one bounded X. Even then, the record proves only target user-mode progress.
+The resumed controller still calls `vcfgGetStatus` and requires the
+kernel-owned `VC_FTG_TARGET_STARTED` state before `OpenExactFixture`; no stage
+record can create, advance, or replace kernel lifecycle authority.
 
 ## Documented API audit
 
@@ -204,8 +256,13 @@ generation/revision exhaustion, wrong caller, module churn, clock rollback,
 timeout, concurrent exit during target read or copy-out, stale callbacks,
 malformed ABI, bad pointers, exact 1/63/64 reads, 0/65 rejection, permissions,
 checked ranges, close/replay, and stale handles after exit/relaunch. The
-bounded fuzzer mutates event sequences, PIDs, modules, time, copy behavior,
-requests, and concurrent exits.
+startup tests cover exact stage ordering, canonical encode/decode, every
+truncated length, single-byte corruption, malformed identity/reserved fields,
+stale prelaunch cleanup, prompt timeout without input, diagnostic
+non-authority, and unchanged target wrong-caller rejection. The bounded fuzzer
+mutates event sequences, PIDs, modules, time, copy behavior, requests,
+concurrent exits, and raw startup records, then round-trips every valid
+diagnostic record.
 
 Module-UID/fingerprint/segment mismatch is exercised only in the host model.
 The manual Vita sequence does not mutate or reload a live module merely to
@@ -225,7 +282,7 @@ ctest --test-dir build-foreign-gate --output-on-failure
 
 ## Vita build and artifact inspection
 
-All four safety selections are mandatory:
+All five safety selections are mandatory:
 
 ```sh
 cmake -S experimental/foreign-target-gate/vita \
@@ -253,8 +310,8 @@ The final clean cross-build inventory is:
 | Artifact | Bytes | SHA-256 |
 |---|---:|---|
 | `vitacheat-foreign-target-gate.skprx` | 11,299 | `f2b9c59f296eb05485523f294164a6b173c8dce2ddb5900b02ee19976cdc96a7` |
-| `vitacheat-foreign-target-fixture.vpk` | 5,234 | `9966d0fca2e967725dc3b1a5bd5152a48de827629ee2b92d21d4c54ab29e4b7c` |
-| `vitacheat-foreign-target-controller.vpk` | 7,105 | `a1ed808a8c9c2db89a5d146e97836aec370136e8a73a7da736eeb8ef35d3a303` |
+| `vitacheat-foreign-target-fixture.vpk` | 6,503 | `fbd4cae8c124674c0b4f802a051e0facc3b815776df2d5893aee2318d30fd881` |
+| `vitacheat-foreign-target-controller.vpk` | 7,366 | `96a323438b322aa20954e62b3bae303ef883776dd57d9208d0f1a95137c141b3` |
 | `libVitaCheatForeignGate_stub.a` | 3,728 | `63199aafac1662bd6724d6ae1140db3768a822606bf68b157a80c7b0cff6df10` |
 
 The exact kernel import allowlist is
@@ -287,22 +344,32 @@ Use only a user-owned test Vita on firmware 3.65. Preserve the original
    Do not hot-load the module; the event registry must predate both fixtures.
 3. Install the fixture and controller VPKs. Verify the bubbles are exactly
    `VCFT00001` and `VCFC00001`.
-4. Launch the controller first. It must report that open is unavailable before
-   the target, then launch the target.
-5. The target writes its symbolic sentinel descriptor and wrong-caller result,
-   remains visibly alive, and asks for X. Press X once to launch/resume the
-   controller; do not close the target manually.
+4. Launch the controller first. It must report that open is unavailable, then
+   truncate and verify empty the exact layout, startup-stage, and fixture-result
+   paths before launching the target.
+5. Poll the startup path read-only. Preserve distinct partial/invalid bytes and
+   send no input while the path is empty, malformed, or below stage 6. Require
+   one complete stage-6 record with the exact identity, integrity, and result
+   tuple `0/-12/0/0`; independently require the exact 32-byte layout and
+   complete fixture JSON. Then send exactly
+   `press cross; wait 100ms; release cross` once. The marker is not evidence of
+   a process event.
 6. The controller opens the event-registered target and performs exact
-   1/63/64-byte reads plus bounded rejection tests. It then destroys only
-   `VCFT00001`, verifies the live handle is stale, and relaunches the fixture.
-7. Press X once in the relaunched fixture. The original controller must resume,
-   reject the old handle again, obtain a distinct new handle, perform one exact
-   64-byte read, and close it.
+   1/63/64-byte reads plus bounded rejection tests only after its independent
+   kernel `TARGET_STARTED` check. It then destroys only `VCFT00001`, verifies
+   the live handle is stale, clears all three target evidence paths, and
+   relaunches the fixture.
+7. Repeat the exact stage-6/layout/fixture validation and one bounded X in the
+   relaunched fixture. The original controller must resume, reject the old
+   handle again, obtain a distinct new handle, perform one exact 64-byte read,
+   and close it.
 8. Retrieve
    `ux0:data/vitacheat-foreign-target-result.json`,
-   `ux0:data/vitacheat-foreign-target-fixture.json`, and serial lines beginning
-   `VCFG`. Stop on the first failure, hang, reboot, missing/truncated log,
-   fail-closed status, unexpected title, or unexpected syscall code.
+   `ux0:data/vitacheat-foreign-target-fixture.json`,
+   `ux0:data/vitacheat-foreign-target-startup.bin`, both layouts, every
+   preserved partial record, and serial lines beginning `VCFG`. Stop on the
+   first failure, hang, reboot, missing/truncated record, fail-closed status,
+   unexpected identity/integrity/stage, or unexpected syscall code.
 9. Remove both VPKs, remove only the exact config line above, delete only the
    named SKPRX, and reboot twice. Confirm both normal boots and that the plugin
    is absent.
@@ -311,6 +378,18 @@ If boot is disrupted, hold **L** while booting to bypass taiHEN plugin loading,
 remove the exact config line and SKPRX, then reboot normally. Do not attempt
 runtime unload as recovery; unregister callback drain is one of the behaviors
 under test.
+
+The second-run diagnostic stop matrix is strict:
+
+| Observation | Proven boundary | Required action |
+|---|---|---|
+| absent/empty through timeout | no successful `main-entered` publication; target entry and process events both remain unproven | no input; preserve and stop |
+| partial/corrupt/wrong-sized | an in-place update or write fault, but no valid stage | preserve every distinct value; poll read-only; no input |
+| valid stage 1-5 | exactly the named boundary completed | stop at timeout before input |
+| stage 6 with unexpected result | target reached prompt but a prerequisite failed | no input; stop |
+| stage 6 with `0/-12/0/0` plus valid layout/fixture | target user mode is ready for one X; process-event generation remains unproven | send one bounded X |
+| stage 7 persists | X was observed but controller launch did not return | never repeat input; stop at timeout |
+| stage 8 | controller launch returned with the recorded code | rely only on resumed controller kernel status for generation proof |
 
 The machine-readable build/run checklist is
 [`experimental/foreign-target-gate/manual-run-kit.json`](../experimental/foreign-target-gate/manual-run-kit.json).

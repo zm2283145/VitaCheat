@@ -5,6 +5,8 @@
 
 #define VC_FTG_LAYOUT_PATH \
     "ux0:data/vitacheat-foreign-target-layout.bin"
+#define VC_FTG_STARTUP_PATH \
+    "ux0:data/vitacheat-foreign-target-startup.bin"
 #define VC_FTG_TARGET_RESULT_PATH \
     "ux0:data/vitacheat-foreign-target-fixture.json"
 #define VC_FTG_CONTROLLER_RESULT_PATH \

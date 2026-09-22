@@ -242,17 +242,32 @@ static bool read_layout(vc_ftg_fixture_layout *layout)
            layout->reserved1 == 0u;
 }
 
-static bool clear_layout(void)
+static bool clear_artifact(const char *path)
 {
-    const SceUID fd = sceIoOpen(
-        VC_FTG_LAYOUT_PATH,
+    SceUID fd = sceIoOpen(
+        path,
         SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC,
         0666);
+    uint8_t byte = 0u;
+    SceSSize read_size;
+    bool result;
 
     if (fd < 0) {
         return false;
     }
-    return sceIoClose(fd) >= 0;
+    if (sceIoClose(fd) < 0) {
+        return false;
+    }
+    fd = sceIoOpen(path, SCE_O_RDONLY, 0);
+    if (fd < 0) {
+        return false;
+    }
+    read_size = sceIoRead(fd, &byte, sizeof(byte));
+    result = read_size == 0;
+    if (sceIoClose(fd) < 0) {
+        result = false;
+    }
+    return result;
 }
 
 static int wait_for_target(
@@ -326,13 +341,42 @@ int main(void)
         goto finish;
     }
     {
-        const bool layout_cleared = clear_layout();
+        const bool layout_cleared =
+            clear_artifact(VC_FTG_LAYOUT_PATH);
 
         if (!record_result(
                 &state,
                 "clear-fixture-layout",
                 layout_cleared,
                 layout_cleared
+                    ? VC_FTG_RESULT_OK
+                    : VC_FTG_RESULT_PLATFORM_FAILURE)) {
+            goto finish;
+        }
+    }
+    {
+        const bool startup_cleared =
+            clear_artifact(VC_FTG_STARTUP_PATH);
+
+        if (!record_result(
+                &state,
+                "clear-startup-stage",
+                startup_cleared,
+                startup_cleared
+                    ? VC_FTG_RESULT_OK
+                    : VC_FTG_RESULT_PLATFORM_FAILURE)) {
+            goto finish;
+        }
+    }
+    {
+        const bool fixture_cleared =
+            clear_artifact(VC_FTG_TARGET_RESULT_PATH);
+
+        if (!record_result(
+                &state,
+                "clear-fixture-result",
+                fixture_cleared,
+                fixture_cleared
                     ? VC_FTG_RESULT_OK
                     : VC_FTG_RESULT_PLATFORM_FAILURE)) {
             goto finish;
@@ -533,13 +577,42 @@ int main(void)
     }
 
     {
-        const bool layout_cleared = clear_layout();
+        const bool layout_cleared =
+            clear_artifact(VC_FTG_LAYOUT_PATH);
 
         if (!record_result(
                 &state,
                 "clear-fixture-layout-before-relaunch",
                 layout_cleared,
                 layout_cleared
+                    ? VC_FTG_RESULT_OK
+                    : VC_FTG_RESULT_PLATFORM_FAILURE)) {
+            goto finish;
+        }
+    }
+    {
+        const bool startup_cleared =
+            clear_artifact(VC_FTG_STARTUP_PATH);
+
+        if (!record_result(
+                &state,
+                "clear-startup-stage-before-relaunch",
+                startup_cleared,
+                startup_cleared
+                    ? VC_FTG_RESULT_OK
+                    : VC_FTG_RESULT_PLATFORM_FAILURE)) {
+            goto finish;
+        }
+    }
+    {
+        const bool fixture_cleared =
+            clear_artifact(VC_FTG_TARGET_RESULT_PATH);
+
+        if (!record_result(
+                &state,
+                "clear-fixture-result-before-relaunch",
+                fixture_cleared,
+                fixture_cleared
                     ? VC_FTG_RESULT_OK
                     : VC_FTG_RESULT_PLATFORM_FAILURE)) {
             goto finish;
