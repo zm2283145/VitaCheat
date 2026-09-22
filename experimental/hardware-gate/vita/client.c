@@ -32,7 +32,12 @@ typedef struct client_state {
     SceUID log_fd;
     unsigned int passed;
     unsigned int failed;
+    uint32_t diagnostic_stage;
+    int32_t diagnostic_raw_result;
+    int32_t diagnostic_query_result;
+    int32_t diagnostic_syscall_result;
     bool first_result;
+    bool diagnostic_queried;
 } client_state;
 
 static void write_all(SceUID fd, const char *text)
@@ -108,14 +113,75 @@ static bool record_result(
 
 static void write_result_footer(client_state *state)
 {
-    char line[256];
+    char line[512];
+    const char *stage_name;
+
+    switch (state->diagnostic_stage) {
+    case VC_HG_DIAGNOSTIC_NONE:
+        stage_name = "none";
+        break;
+    case VC_HG_DIAGNOSTIC_CALLER_PID:
+        stage_name = "caller-pid";
+        break;
+    case VC_HG_DIAGNOSTIC_REQUEST_COPY:
+        stage_name = "request-copy";
+        break;
+    case VC_HG_DIAGNOSTIC_SYSTEM_TIME:
+        stage_name = "system-time";
+        break;
+    case VC_HG_DIAGNOSTIC_TITLE_QUERY:
+        stage_name = "title-query";
+        break;
+    case VC_HG_DIAGNOSTIC_TITLE_NORMALIZE:
+        stage_name = "title-normalize";
+        break;
+    case VC_HG_DIAGNOSTIC_MODULE_ID:
+        stage_name = "module-id";
+        break;
+    case VC_HG_DIAGNOSTIC_MODULE_INFO:
+        stage_name = "module-info";
+        break;
+    case VC_HG_DIAGNOSTIC_MODULE_ID_MISMATCH:
+        stage_name = "module-id-mismatch";
+        break;
+    case VC_HG_DIAGNOSTIC_MODULE_FINGERPRINT:
+        stage_name = "module-fingerprint";
+        break;
+    case VC_HG_DIAGNOSTIC_MODULE_FINGERPRINT_ZERO:
+        stage_name = "module-fingerprint-zero";
+        break;
+    case VC_HG_DIAGNOSTIC_MODULE_NAME:
+        stage_name = "module-name";
+        break;
+    case VC_HG_DIAGNOSTIC_MODULE_SEGMENTS:
+        stage_name = "module-segments";
+        break;
+    case VC_HG_DIAGNOSTIC_RESPONSE_COPY:
+        stage_name = "response-copy";
+        break;
+    default:
+        stage_name = "invalid";
+        break;
+    }
 
     (void)snprintf(
         line, sizeof(line),
         "\n  ],\n"
+        "  \"diagnostic\":{\"queried\":%s,"
+        "\"stage\":%u,\"stage_name\":\"%s\","
+        "\"raw_api_code\":%d,\"raw_api_hex\":\"0x%08x\","
+        "\"query_code\":%d,\"syscall_code\":%d,"
+        "\"syscall_hex\":\"0x%08x\"},\n"
         "  \"summary\":{\"passed\":%u,\"failed\":%u,"
         "\"result\":\"%s\"}\n"
         "}\n",
+        state->diagnostic_queried ? "true" : "false",
+        state->diagnostic_stage, stage_name,
+        state->diagnostic_raw_result,
+        (unsigned int)state->diagnostic_raw_result,
+        state->diagnostic_query_result,
+        state->diagnostic_syscall_result,
+        (unsigned int)state->diagnostic_syscall_result,
         state->passed, state->failed,
         state->failed == 0u ? "pass" : "fail");
     write_all(state->log_fd, line);
@@ -136,6 +202,45 @@ static void init_status_request(vc_hg_status_request *request)
     memset(request, 0, sizeof(*request));
     request->version = VC_HG_ABI_VERSION;
     request->struct_size = sizeof(*request);
+}
+
+static void capture_open_diagnostic(
+    client_state *state,
+    int32_t syscall_result)
+{
+    vc_hg_status_request request;
+    vc_hg_status_response_v2 response;
+    int raw_result;
+    int result;
+
+    init_status_request(&request);
+    request.version = VC_HG_STATUS_DIAGNOSTIC_VERSION;
+    memset(&response, 0, sizeof(response));
+    raw_result = vchgGetStatus(&request, &response.base);
+    result = vc_hg_decode_syscall_result(raw_result);
+    state->diagnostic_queried = true;
+    state->diagnostic_query_result = result;
+    state->diagnostic_syscall_result = syscall_result;
+    if (result == VC_HG_RESULT_OK &&
+        response.base.version ==
+            VC_HG_STATUS_DIAGNOSTIC_VERSION &&
+        response.base.struct_size == sizeof(response) &&
+        response.diagnostic_stage <
+            VC_HG_DIAGNOSTIC_STAGE_COUNT &&
+        response.reserved0 == 0u &&
+        response.reserved1 == 0u) {
+        state->diagnostic_stage =
+            response.diagnostic_stage;
+        state->diagnostic_raw_result =
+            response.diagnostic_raw_result;
+    }
+    sceClibPrintf(
+        "VCHG diagnostic query=%d stage=%u raw=%d "
+        "raw_hex=0x%08x syscall=%d syscall_hex=0x%08x\n",
+        result, state->diagnostic_stage,
+        state->diagnostic_raw_result,
+        (unsigned int)state->diagnostic_raw_result,
+        syscall_result, (unsigned int)syscall_result);
 }
 
 static void init_session_request(
@@ -224,7 +329,8 @@ static int read_segment(
     init_read_request(
         &request, handle, segment_index, offset, length);
     memset(response, 0xa5, sizeof(*response));
-    return vchgReadSelfSegment(&request, response);
+    return vc_hg_decode_syscall_result(
+        vchgReadSelfSegment(&request, response));
 }
 
 static bool response_exact(
@@ -269,6 +375,7 @@ int main(void)
     uintptr_t segment_base;
     uint32_t segment_size;
     int result;
+    int raw_result;
 
     memset(&state, 0, sizeof(state));
     state.log_fd = -1;
@@ -277,8 +384,8 @@ int main(void)
 
     init_status_request(&status_request);
     memset(&status_response, 0, sizeof(status_response));
-    result = vchgGetStatus(
-        &status_request, &status_response);
+    result = vc_hg_decode_syscall_result(
+        vchgGetStatus(&status_request, &status_response));
     if (!record_result(
             &state, "status-ready",
             result == VC_HG_RESULT_OK &&
@@ -293,13 +400,16 @@ int main(void)
 
     open_request = status_request;
     memset(&open_response, 0, sizeof(open_response));
-    result = vchgOpenSelf(&open_request, &open_response);
+    raw_result = vchgOpenSelf(
+        &open_request, &open_response);
+    result = vc_hg_decode_syscall_result(raw_result);
     if (!record_result(
             &state, "open-self",
             result == VC_HG_RESULT_OK &&
                 open_response.handle != 0u &&
                 open_response.segment_count != 0u,
             result)) {
+        capture_open_diagnostic(&state, raw_result);
         goto finish;
     }
     first_handle = open_response.handle;
@@ -307,8 +417,9 @@ int main(void)
     init_session_request(
         &session_request, first_handle);
     memset(&module_response, 0, sizeof(module_response));
-    result = vchgGetSelfMainModule(
-        &session_request, &module_response);
+    result = vc_hg_decode_syscall_result(
+        vchgGetSelfMainModule(
+            &session_request, &module_response));
     if (!record_result(
             &state, "main-module-snapshot",
             result == VC_HG_RESULT_OK &&
@@ -471,9 +582,10 @@ int main(void)
     init_read_request(
         &read_request, first_handle,
         sentinel_segment, sentinel_offset, 1u);
-    result = vchgReadSelfSegment(
-        &read_request,
-        (vc_hg_read_response *)(uintptr_t)1u);
+    result = vc_hg_decode_syscall_result(
+        vchgReadSelfSegment(
+            &read_request,
+            (vc_hg_read_response *)(uintptr_t)1u));
     if (!record_result(
             &state, "bad-output-pointer-rejected",
             result == VC_HG_RESULT_COPY_TO_USER_FAILED,
@@ -482,7 +594,8 @@ int main(void)
     }
 
     memset(&open_response, 0, sizeof(open_response));
-    result = vchgOpenSelf(&open_request, &open_response);
+    result = vc_hg_decode_syscall_result(
+        vchgOpenSelf(&open_request, &open_response));
     if (!record_result(
             &state, "single-session-bound",
             result == VC_HG_RESULT_SESSION_ACTIVE,
@@ -493,8 +606,8 @@ int main(void)
     init_session_request(
         &session_request, first_handle);
     memset(&close_response, 0, sizeof(close_response));
-    result = vchgClose(
-        &session_request, &close_response);
+    result = vc_hg_decode_syscall_result(
+        vchgClose(&session_request, &close_response));
     if (!record_result(
             &state, "close",
             result == VC_HG_RESULT_OK &&
@@ -514,7 +627,8 @@ int main(void)
     }
 
     memset(&open_response, 0, sizeof(open_response));
-    result = vchgOpenSelf(&open_request, &open_response);
+    result = vc_hg_decode_syscall_result(
+        vchgOpenSelf(&open_request, &open_response));
     if (!record_result(
             &state, "reopen-nonrepeating",
             result == VC_HG_RESULT_OK &&
@@ -526,8 +640,9 @@ int main(void)
 
     init_session_request(
         &session_request, first_handle);
-    result = vchgGetSelfMainModule(
-        &session_request, &module_response);
+    result = vc_hg_decode_syscall_result(
+        vchgGetSelfMainModule(
+            &session_request, &module_response));
     if (!record_result(
             &state, "module-session-mismatch-rejected",
             result == VC_HG_RESULT_INVALID_HANDLE,
@@ -553,8 +668,9 @@ finish:
             open_response.handle != 0u
                 ? open_response.handle
                 : first_handle);
-        (void)vchgClose(
-            &session_request, &close_response);
+        (void)vc_hg_decode_syscall_result(
+            vchgClose(
+                &session_request, &close_response));
     }
     write_result_footer(&state);
     return state.failed == 0u ? 0 : 1;

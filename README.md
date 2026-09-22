@@ -182,6 +182,9 @@ same-process, main-module-segment, 64-byte VitaSDK copy path. It is not linked
 to the production library or existing self-test, is disabled from normal
 builds, performs no automatic installation, and grants no foreign-title,
 write, injection, hook, pause, search, or network capability.
+The first guarded 3.65 run proved boot/load and status only: main-module
+discovery failed closed before any read. An append-only diagnostic status
+response is awaiting a hardware retest; no native read is yet device-validated.
 
 The first Vita-facing build is the deliberately unprivileged and now
 hardware-tested

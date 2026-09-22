@@ -6,6 +6,7 @@
 
 typedef struct fuzz_platform {
     vc_hg_module_snapshot module;
+    vc_hg_platform_diagnostic diagnostic;
     uint8_t title_id[VC_HG_TITLE_ID_CAPACITY];
     uint8_t memory[128];
     uint64_t now_us;
@@ -70,6 +71,16 @@ static bool fuzz_get_module(
         return false;
     }
     *module = platform->module;
+    return true;
+}
+
+static bool fuzz_get_diagnostic(
+    void *context,
+    vc_hg_platform_diagnostic *diagnostic)
+{
+    fuzz_platform *platform = (fuzz_platform *)context;
+
+    *diagnostic = platform->diagnostic;
     return true;
 }
 
@@ -182,6 +193,7 @@ static void fuzz_initialize(
     dependencies->get_time_us = fuzz_get_time;
     dependencies->get_title_id = fuzz_get_title;
     dependencies->get_main_module = fuzz_get_module;
+    dependencies->get_diagnostic = fuzz_get_diagnostic;
     dependencies->copy_from_user = fuzz_copy_from;
     dependencies->copy_to_user = fuzz_copy_to;
     dependencies->read_process = fuzz_read;
@@ -237,15 +249,27 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     memcpy(request.bytes, data + 1u, request_size);
     operation = data[0] % 5u;
     if ((data[0] & 0x10u) != 0u) {
-        if (operation <= 1u) {
+        if (operation == 0u) {
             vc_hg_status_request *status =
                 (vc_hg_status_request *)request.bytes;
 
-            status->version = VC_HG_ABI_VERSION;
+            status->version =
+                (data[0] & 0x08u) != 0u
+                    ? VC_HG_STATUS_DIAGNOSTIC_VERSION
+                    : VC_HG_ABI_VERSION;
             status->struct_size = sizeof(*status);
             status->capabilities = 0u;
             status->reserved0 = 0u;
             status->reserved1 = 0u;
+        } else if (operation == 1u) {
+            vc_hg_open_request *open =
+                (vc_hg_open_request *)request.bytes;
+
+            open->version = VC_HG_ABI_VERSION;
+            open->struct_size = sizeof(*open);
+            open->capabilities = 0u;
+            open->reserved0 = 0u;
+            open->reserved1 = 0u;
         } else if (operation == 2u ||
                    operation == 4u) {
             vc_hg_session_request *session =

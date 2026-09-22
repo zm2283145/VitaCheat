@@ -22,6 +22,8 @@ static int failures;
 typedef struct fake_platform {
     vc_hg_service *service;
     vc_hg_module_snapshot module;
+    vc_hg_platform_diagnostic diagnostic;
+    vc_hg_platform_diagnostic failure_diagnostic;
     uint8_t title_id[VC_HG_TITLE_ID_CAPACITY];
     uint8_t memory[256];
     uint64_t now_us;
@@ -59,7 +61,11 @@ static bool fake_get_caller_pid(
     fake_platform *platform = (fake_platform *)context;
 
     ++platform->caller_calls;
+    memset(&platform->diagnostic, 0,
+           sizeof(platform->diagnostic));
     if (!platform->caller_ok) {
+        platform->diagnostic =
+            platform->failure_diagnostic;
         return false;
     }
     *process_id = platform->process_id;
@@ -72,6 +78,8 @@ static bool fake_get_time_us(void *context, uint64_t *now_us)
 
     ++platform->time_calls;
     if (!platform->time_ok) {
+        platform->diagnostic =
+            platform->failure_diagnostic;
         return false;
     }
     *now_us = platform->now_us;
@@ -88,6 +96,8 @@ static bool fake_get_title_id(
     ++platform->title_calls;
     if (!platform->title_ok ||
         process_id != platform->process_id) {
+        platform->diagnostic =
+            platform->failure_diagnostic;
         return false;
     }
     memcpy(title_id, platform->title_id,
@@ -105,10 +115,22 @@ static bool fake_get_main_module(
     ++platform->module_calls;
     if (!platform->module_ok ||
         process_id != platform->process_id) {
+        platform->diagnostic =
+            platform->failure_diagnostic;
         return false;
     }
     *module = platform->module;
     module->process_id = process_id;
+    return true;
+}
+
+static bool fake_get_diagnostic(
+    void *context,
+    vc_hg_platform_diagnostic *diagnostic)
+{
+    fake_platform *platform = (fake_platform *)context;
+
+    *diagnostic = platform->diagnostic;
     return true;
 }
 
@@ -125,6 +147,8 @@ static bool fake_copy_from_user(
     if (!platform->copy_from_ok ||
         process_id != platform->process_id ||
         user_source == (const void *)(uintptr_t)1u) {
+        platform->diagnostic =
+            platform->failure_diagnostic;
         return false;
     }
     memcpy(destination, user_source, size);
@@ -144,6 +168,8 @@ static bool fake_copy_to_user(
     if (!platform->copy_to_ok ||
         process_id != platform->process_id ||
         user_destination == (void *)(uintptr_t)1u) {
+        platform->diagnostic =
+            platform->failure_diagnostic;
         return false;
     }
     memcpy(user_destination, source, size);
@@ -214,6 +240,10 @@ static void initialize_fixture(
     fixture_value->platform.time_ok = true;
     fixture_value->platform.title_ok = true;
     fixture_value->platform.module_ok = true;
+    fixture_value->platform.failure_diagnostic.stage =
+        VC_HG_DIAGNOSTIC_MODULE_ID;
+    fixture_value->platform.failure_diagnostic.raw_result =
+        (int32_t)UINT32_C(0x8002000e);
     fixture_value->platform.copy_from_ok = true;
     fixture_value->platform.copy_to_ok = true;
     fixture_value->platform.read_ok = true;
@@ -253,6 +283,8 @@ static void initialize_fixture(
         fake_get_title_id;
     fixture_value->dependencies.get_main_module =
         fake_get_main_module;
+    fixture_value->dependencies.get_diagnostic =
+        fake_get_diagnostic;
     fixture_value->dependencies.copy_from_user =
         fake_copy_from_user;
     fixture_value->dependencies.copy_to_user =
@@ -378,6 +410,126 @@ static void test_status_modes(void)
     CHECK(response.status == VC_HG_RUNTIME_UNAVAILABLE);
     CHECK(response.last_result ==
           VC_HG_RESULT_MODULE_UNAVAILABLE);
+}
+
+static void test_diagnostic_status_and_syscall_decode(void)
+{
+    static const uint32_t stages[] = {
+        VC_HG_DIAGNOSTIC_CALLER_PID,
+        VC_HG_DIAGNOSTIC_REQUEST_COPY,
+        VC_HG_DIAGNOSTIC_SYSTEM_TIME,
+        VC_HG_DIAGNOSTIC_TITLE_QUERY,
+        VC_HG_DIAGNOSTIC_TITLE_NORMALIZE,
+        VC_HG_DIAGNOSTIC_MODULE_ID,
+        VC_HG_DIAGNOSTIC_MODULE_INFO,
+        VC_HG_DIAGNOSTIC_MODULE_ID_MISMATCH,
+        VC_HG_DIAGNOSTIC_MODULE_FINGERPRINT,
+        VC_HG_DIAGNOSTIC_MODULE_FINGERPRINT_ZERO,
+        VC_HG_DIAGNOSTIC_MODULE_NAME,
+        VC_HG_DIAGNOSTIC_MODULE_SEGMENTS,
+        VC_HG_DIAGNOSTIC_RESPONSE_COPY
+    };
+    fixture fixture_value;
+    vc_hg_status_request request;
+    vc_hg_open_response open_response;
+    vc_hg_status_response_v2 response;
+    struct {
+        vc_hg_status_response response;
+        uint32_t guard;
+    } v1;
+    size_t index;
+    int32_t gate_result;
+
+    for (gate_result = VC_HG_RESULT_STOPPED;
+         gate_result < VC_HG_RESULT_OK;
+         ++gate_result) {
+        const int32_t syscall_result =
+            (int32_t)((uint32_t)gate_result &
+                      ~UINT32_C(0x40000000));
+
+        CHECK(vc_hg_decode_syscall_result(
+                  syscall_result) == gate_result);
+    }
+    CHECK(vc_hg_decode_syscall_result(0) == 0);
+    CHECK(vc_hg_decode_syscall_result(
+              (int32_t)UINT32_C(0x80020010)) ==
+          (int32_t)UINT32_C(0x80020010));
+
+    for (index = 0;
+         index < sizeof(stages) / sizeof(stages[0]);
+         ++index) {
+        initialize_fixture(&fixture_value, true, true);
+        fixture_value.platform.failure_diagnostic.stage =
+            stages[index];
+        fixture_value.platform.failure_diagnostic.raw_result =
+            (int32_t)(UINT32_C(0x80020100) +
+                      (uint32_t)index);
+        switch (stages[index]) {
+        case VC_HG_DIAGNOSTIC_CALLER_PID:
+            fixture_value.platform.caller_ok = false;
+            break;
+        case VC_HG_DIAGNOSTIC_REQUEST_COPY:
+            fixture_value.platform.copy_from_ok = false;
+            break;
+        case VC_HG_DIAGNOSTIC_SYSTEM_TIME:
+            fixture_value.platform.time_ok = false;
+            break;
+        case VC_HG_DIAGNOSTIC_TITLE_QUERY:
+        case VC_HG_DIAGNOSTIC_TITLE_NORMALIZE:
+            fixture_value.platform.title_ok = false;
+            break;
+        case VC_HG_DIAGNOSTIC_RESPONSE_COPY:
+            fixture_value.platform.copy_to_ok = false;
+            break;
+        default:
+            fixture_value.platform.module_ok = false;
+            break;
+        }
+        init_status_request(&request);
+        gate_result = vc_hg_service_open_self(
+            &fixture_value.service,
+            &request, &open_response);
+        CHECK(gate_result != VC_HG_RESULT_OK);
+
+        fixture_value.platform.caller_ok = true;
+        fixture_value.platform.time_ok = true;
+        fixture_value.platform.title_ok = true;
+        fixture_value.platform.module_ok = true;
+        fixture_value.platform.copy_from_ok = true;
+        fixture_value.platform.copy_to_ok = true;
+        memset(&response, 0xa5, sizeof(response));
+        request.version =
+            VC_HG_STATUS_DIAGNOSTIC_VERSION;
+        CHECK(vc_hg_service_get_status(
+                  &fixture_value.service,
+                  &request, &response) ==
+              VC_HG_RESULT_OK);
+        CHECK(response.base.version ==
+              VC_HG_STATUS_DIAGNOSTIC_VERSION);
+        CHECK(response.base.struct_size ==
+              sizeof(response));
+        CHECK(response.base.last_result ==
+              gate_result);
+        CHECK(response.diagnostic_stage ==
+              stages[index]);
+        CHECK(response.diagnostic_raw_result ==
+              (int32_t)(UINT32_C(0x80020100) +
+                        (uint32_t)index));
+        CHECK(response.reserved0 == 0u);
+        CHECK(response.reserved1 == 0u);
+    }
+
+    init_status_request(&request);
+    memset(&v1, 0, sizeof(v1));
+    v1.guard = UINT32_C(0x5a5aa5a5);
+    CHECK(vc_hg_service_get_status(
+              &fixture_value.service,
+              &request, &v1.response) ==
+          VC_HG_RESULT_OK);
+    CHECK(v1.response.version == VC_HG_ABI_VERSION);
+    CHECK(v1.response.struct_size ==
+          sizeof(v1.response));
+    CHECK(v1.guard == UINT32_C(0x5a5aa5a5));
 }
 
 static void test_open_and_module(void)
@@ -533,8 +685,15 @@ static void test_malformed_requests(void)
 
     initialize_fixture(&fixture_value, true, true);
     init_status_request(&status_request);
-    status_request.version = 2u;
+    status_request.version = 3u;
     CHECK(vc_hg_service_get_status(
+              &fixture_value.service,
+              &status_request, &status_response) ==
+          VC_HG_RESULT_INVALID_VERSION);
+    init_status_request(&status_request);
+    status_request.version =
+        VC_HG_STATUS_DIAGNOSTIC_VERSION;
+    CHECK(vc_hg_service_open_self(
               &fixture_value.service,
               &status_request, &status_response) ==
           VC_HG_RESULT_INVALID_VERSION);
@@ -728,6 +887,7 @@ static void test_fail_closed_inputs_and_stop(void)
 int main(void)
 {
     test_status_modes();
+    test_diagnostic_status_and_syscall_decode();
     test_open_and_module();
     test_exact_reads_and_ranges();
     test_malformed_requests();

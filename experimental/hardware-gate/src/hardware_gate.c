@@ -106,6 +106,7 @@ static bool vc_hg_dependencies_valid(
            dependencies->get_time_us != NULL &&
            dependencies->get_title_id != NULL &&
            dependencies->get_main_module != NULL &&
+           dependencies->get_diagnostic != NULL &&
            dependencies->copy_from_user != NULL &&
            dependencies->copy_to_user != NULL &&
            dependencies->read_process != NULL;
@@ -234,7 +235,41 @@ static vc_hg_result vc_hg_record_result(
     vc_hg_result result)
 {
     service->last_result = result;
+    service->last_diagnostic_stage = VC_HG_DIAGNOSTIC_NONE;
+    service->last_diagnostic_raw_result = 0;
     return result;
+}
+
+static vc_hg_result vc_hg_record_result_with_diagnostic(
+    vc_hg_service *service,
+    vc_hg_result result,
+    const vc_hg_platform_diagnostic *diagnostic)
+{
+    service->last_result = result;
+    if (result != VC_HG_RESULT_OK &&
+        diagnostic->stage > VC_HG_DIAGNOSTIC_NONE &&
+        diagnostic->stage < VC_HG_DIAGNOSTIC_STAGE_COUNT) {
+        service->last_diagnostic_stage = diagnostic->stage;
+        service->last_diagnostic_raw_result =
+            diagnostic->raw_result;
+    } else {
+        service->last_diagnostic_stage =
+            VC_HG_DIAGNOSTIC_NONE;
+        service->last_diagnostic_raw_result = 0;
+    }
+    return result;
+}
+
+static void vc_hg_read_platform_diagnostic(
+    vc_hg_service *service,
+    vc_hg_platform_diagnostic *diagnostic)
+{
+    vc_hg_wipe(diagnostic, sizeof(*diagnostic));
+    if (!service->dependencies.get_diagnostic(
+            service->dependencies.context, diagnostic) ||
+        diagnostic->stage >= VC_HG_DIAGNOSTIC_STAGE_COUNT) {
+        vc_hg_wipe(diagnostic, sizeof(*diagnostic));
+    }
 }
 
 static bool vc_hg_module_equal(
@@ -337,9 +372,13 @@ static vc_hg_result vc_hg_validate_title(
 }
 
 static vc_hg_result vc_hg_validate_status_request(
-    const vc_hg_status_request *request)
+    const vc_hg_status_request *request,
+    bool allow_diagnostic_version)
 {
-    if (request->version != VC_HG_ABI_VERSION) {
+    if (request->version != VC_HG_ABI_VERSION &&
+        (!allow_diagnostic_version ||
+         request->version !=
+             VC_HG_STATUS_DIAGNOSTIC_VERSION)) {
         return VC_HG_RESULT_INVALID_VERSION;
     }
     if (request->struct_size != sizeof(*request)) {
@@ -519,9 +558,10 @@ vc_hg_result vc_hg_service_start(vc_hg_service *service)
     }
     vc_hg_scrub_session(service);
     service->running = true;
-    service->last_result = service->config.enabled
-                               ? VC_HG_RESULT_OK
-                               : VC_HG_RESULT_DISABLED;
+    (void)vc_hg_record_result(
+        service, service->config.enabled
+                     ? VC_HG_RESULT_OK
+                     : VC_HG_RESULT_DISABLED);
     vc_hg_leave(service);
     return VC_HG_RESULT_OK;
 }
@@ -535,7 +575,8 @@ vc_hg_result vc_hg_service_stop(vc_hg_service *service)
     }
     vc_hg_scrub_session(service);
     service->running = false;
-    service->last_result = VC_HG_RESULT_STOPPED;
+    (void)vc_hg_record_result(
+        service, VC_HG_RESULT_STOPPED);
     vc_hg_leave(service);
     return VC_HG_RESULT_OK;
 }
@@ -547,11 +588,15 @@ vc_hg_result vc_hg_service_get_status(
 {
     vc_hg_status_request request;
     vc_hg_status_response response;
+    vc_hg_status_response_v2 response_v2;
+    vc_hg_status_response *response_base = &response;
+    size_t response_size = sizeof(response);
     vc_hg_result result;
     uint32_t process_id;
 
     vc_hg_wipe(&request, sizeof(request));
     vc_hg_wipe(&response, sizeof(response));
+    vc_hg_wipe(&response_v2, sizeof(response_v2));
     result = vc_hg_enter(service, false, false);
     if (result != VC_HG_RESULT_OK) {
         return result;
@@ -565,28 +610,41 @@ vc_hg_result vc_hg_service_get_status(
             request_user, sizeof(request));
     }
     if (result == VC_HG_RESULT_OK) {
-        result = vc_hg_validate_status_request(&request);
+        result = vc_hg_validate_status_request(
+            &request, true);
     }
     vc_hg_adapter_lock(service);
     if (result == VC_HG_RESULT_OK) {
-        response.version = VC_HG_ABI_VERSION;
-        response.struct_size = sizeof(response);
-        response.capabilities =
+        if (request.version ==
+            VC_HG_STATUS_DIAGNOSTIC_VERSION) {
+            response_base = &response_v2.base;
+            response_size = sizeof(response_v2);
+            response_v2.diagnostic_stage =
+                service->last_diagnostic_stage;
+            response_v2.diagnostic_raw_result =
+                service->last_diagnostic_raw_result;
+        }
+        response_base->version = request.version;
+        response_base->struct_size =
+            (uint16_t)response_size;
+        response_base->capabilities =
             service->config.enabled &&
                     service->config.api_available
                                     ? VC_HG_KNOWN_CAPABILITIES
                                     : 0u;
-        response.max_read = VC_HG_MAX_READ;
-        response.timeout_ms = VC_HG_DEFAULT_TIMEOUT_MS;
-        response.max_segments = VC_HG_MAX_SEGMENTS;
-        response.abi_flags = VC_HG_ABI_FLAGS;
-        response.last_result = service->last_result;
+        response_base->max_read = VC_HG_MAX_READ;
+        response_base->timeout_ms =
+            VC_HG_DEFAULT_TIMEOUT_MS;
+        response_base->max_segments = VC_HG_MAX_SEGMENTS;
+        response_base->abi_flags = VC_HG_ABI_FLAGS;
+        response_base->last_result = service->last_result;
         if (!service->config.enabled) {
-            response.status = VC_HG_RUNTIME_DISABLED;
+            response_base->status = VC_HG_RUNTIME_DISABLED;
         } else if (!service->config.api_available) {
-            response.status = VC_HG_RUNTIME_API_MISMATCH;
+            response_base->status =
+                VC_HG_RUNTIME_API_MISMATCH;
         } else if (!service->running) {
-            response.status = VC_HG_RUNTIME_STOPPED;
+            response_base->status = VC_HG_RUNTIME_STOPPED;
         } else if (
             service->last_result ==
                 VC_HG_RESULT_CALLER_UNAVAILABLE ||
@@ -594,16 +652,18 @@ vc_hg_result vc_hg_service_get_status(
                 VC_HG_RESULT_MODULE_UNAVAILABLE ||
             service->last_result ==
                 VC_HG_RESULT_PLATFORM_FAILURE) {
-            response.status = VC_HG_RUNTIME_UNAVAILABLE;
+            response_base->status =
+                VC_HG_RUNTIME_UNAVAILABLE;
         } else if (service->session.active) {
-            response.status = VC_HG_RUNTIME_SESSION_OPEN;
+            response_base->status =
+                VC_HG_RUNTIME_SESSION_OPEN;
         } else {
-            response.status = VC_HG_RUNTIME_READY;
+            response_base->status = VC_HG_RUNTIME_READY;
         }
         vc_hg_leave(service);
         result = vc_hg_copy_response(
             service, process_id, response_user,
-            &response, sizeof(response));
+            response_base, response_size);
         vc_hg_adapter_lock(service);
     }
     if (result != VC_HG_RESULT_OK) {
@@ -612,6 +672,7 @@ vc_hg_result vc_hg_service_get_status(
     vc_hg_adapter_finish(service);
     vc_hg_wipe(&request, sizeof(request));
     vc_hg_wipe(&response, sizeof(response));
+    vc_hg_wipe(&response_v2, sizeof(response_v2));
     return result;
 }
 
@@ -627,11 +688,13 @@ vc_hg_result vc_hg_service_open_self(
     uint32_t process_id = 0u;
     uint64_t now_us = 0u;
     vc_hg_result result;
+    vc_hg_platform_diagnostic diagnostic;
 
     vc_hg_wipe(&request, sizeof(request));
     vc_hg_wipe(&response, sizeof(response));
     vc_hg_wipe(&module, sizeof(module));
     vc_hg_wipe(title_id, sizeof(title_id));
+    vc_hg_wipe(&diagnostic, sizeof(diagnostic));
     result = vc_hg_enter(service, true, true);
     if (result != VC_HG_RESULT_OK) {
         return result;
@@ -645,7 +708,8 @@ vc_hg_result vc_hg_service_open_self(
             request_user, sizeof(request));
     }
     if (result == VC_HG_RESULT_OK) {
-        result = vc_hg_validate_status_request(&request);
+        result = vc_hg_validate_status_request(
+            &request, false);
     }
     if (result == VC_HG_RESULT_OK &&
         (!vc_hg_get_time(service, &now_us) ||
@@ -666,6 +730,10 @@ vc_hg_result vc_hg_service_open_self(
     if (result == VC_HG_RESULT_OK) {
         result = vc_hg_validate_module(
             service, process_id, &module);
+    }
+    if (result != VC_HG_RESULT_OK) {
+        vc_hg_read_platform_diagnostic(
+            service, &diagnostic);
     }
     vc_hg_adapter_lock(service);
     if (result == VC_HG_RESULT_OK &&
@@ -701,6 +769,10 @@ vc_hg_result vc_hg_service_open_self(
         result = vc_hg_copy_response(
             service, process_id, response_user,
             &response, sizeof(response));
+        if (result != VC_HG_RESULT_OK) {
+            vc_hg_read_platform_diagnostic(
+                service, &diagnostic);
+        }
         vc_hg_adapter_lock(service);
     }
     if (result == VC_HG_RESULT_OK) {
@@ -717,12 +789,14 @@ vc_hg_result vc_hg_service_open_self(
             ++service->next_handle;
         }
     }
-    vc_hg_record_result(service, result);
+    vc_hg_record_result_with_diagnostic(
+        service, result, &diagnostic);
     vc_hg_adapter_finish(service);
     vc_hg_wipe(&request, sizeof(request));
     vc_hg_wipe(&response, sizeof(response));
     vc_hg_wipe(&module, sizeof(module));
     vc_hg_wipe(title_id, sizeof(title_id));
+    vc_hg_wipe(&diagnostic, sizeof(diagnostic));
     return result;
 }
 

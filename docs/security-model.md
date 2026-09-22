@@ -42,6 +42,11 @@ is an explicitly enabled, 3.65-only SKPRX/client pair for the source-owned
 main-module identity, accepts only segment/index/offset reads up to 64 bytes,
 and reads only that same caller process. It cannot identify or read a foreign
 title, and it adds no production capability.
+Its diagnostic status extension exposes only an enum stage and signed API
+return code. It does not expose process/module identifiers, addresses,
+fingerprints, segment bases, or data. The first guarded 3.65 run failed closed
+in module discovery before any read and therefore does not validate the native
+read path.
 
 ## Authority model
 

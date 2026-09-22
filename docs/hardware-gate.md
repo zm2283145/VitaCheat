@@ -51,7 +51,7 @@ exports are:
 
 | Export | NID | Request | Response |
 |---|---:|---:|---:|
-| `vchgGetStatus` | `0xD62A0D75` | 16 bytes | 32 bytes |
+| `vchgGetStatus` | `0xD62A0D75` | 16 bytes | 32-byte v1 or 48-byte diagnostic v2 |
 | `vchgOpenSelf` | `0xF4B684B1` | 16 bytes | 40 bytes |
 | `vchgGetSelfMainModule` | `0x2E3A51C7` | 24 bytes | 128 bytes |
 | `vchgReadSelfSegment` | `0x8C97E420` | 32 bytes | 80 bytes |
@@ -61,6 +61,11 @@ Every request and response has a compile-time size assertion. Requests require
 the exact version, size, capability set, nonzero handle where applicable, and
 zero reserved fields. `GetStatus` remains callable when the capability is
 disabled, stopped, or compiled status-only because of an API mismatch.
+`GetStatus` alone also accepts append-only diagnostic version 2. Its first 32
+bytes retain the v1 layout and its final 16 bytes report only a diagnostic
+stage, the exact signed return from the failed VitaSDK call when one exists,
+and two zero reserved words. All other calls remain v1-only. No PID, module ID,
+address, segment base, fingerprint, or user data is added to diagnostics.
 
 `OpenSelf` derives the ambient syscall caller PID in the kernel, exact-matches
 the compile-time `VCHG00001` title ID, obtains that PID's main module, and
@@ -96,6 +101,48 @@ pretended successful unload.
 
 This is source-owned same-process identity checking, not strong
 foreign-process attestation and not a production generation model.
+
+### First 3.65 run and diagnostic retest
+
+The first guarded retail 3.65 run used commit
+`f97c31f31bb1a0be063f1371964d8fa0a290c836` and SKPRX SHA-256
+`2b561802df82529dec9ffa7f4ef3bc10625d294582585ba00fab3b1c9f935b09`.
+`status-ready` passed, then `OpenSelf` returned signed `-1073741837`
+(`0xBFFFFFF3`); no read ran. The raw result JSON SHA-256 was
+`b92423707f36736e546daba859675098f0efc83708d941e70f288fe7b565dca2`.
+The config and SKPRX were removed and two subsequent boots were normal.
+
+The internal `OpenSelf` path can return `MODULE_UNAVAILABLE` (`-13`) only after
+caller PID, request copy, clock, and exact title validation have succeeded and
+the main-module adapter has returned false. The observed `0xBFFFFFF3` is the
+same private result with bit 30 cleared. The client now restores that bit only
+when the result decodes into the gate's exact `-24..-1` range; unrelated SCE
+errors are preserved.
+
+The original adapter collapsed all module-query failures and discarded their
+raw results, so the first run cannot prove whether module ID, module info,
+fingerprint, name normalization, or segment validation failed. Installed
+VitaSDK declarations, argument order, `SceKernelModuleInfo` size `0x1B8`, and
+the linked 3.63+ import NIDs all match the implementation; there is no proven
+safe API correction to make yet. Diagnostic status v2 therefore records these
+non-sensitive stage IDs:
+
+| ID | Stage | Raw field |
+|---:|---|---|
+| 1 | caller PID | API return |
+| 2 | request copy | API return |
+| 3 | system time | API return |
+| 4-5 | title query / normalization | API return, or zero for local validation |
+| 6-8 | module ID / info / ID consistency | API return, or zero for consistency |
+| 9-10 | fingerprint call / zero fingerprint | API return |
+| 11-12 | module name / segment validation | zero for local validation |
+| 13 | response copy | API return |
+
+A retest must use both the newly built SKPRX and VPK. Run once and stop on the
+same first anomaly rules. If `OpenSelf` fails, retain the additive JSON
+`diagnostic` object and the `VCHG diagnostic` serial line. This diagnostic
+change has been compile/link and host validated only; it has not been deployed,
+launched, or otherwise validated on a Vita.
 
 ## Pinned SDK and firmware evidence
 
@@ -227,6 +274,16 @@ Expected result template:
   "tests": [
     {"name": "status-ready", "result": "pass", "code": 0}
   ],
+  "diagnostic": {
+    "queried": false,
+    "stage": 0,
+    "stage_name": "none",
+    "raw_api_code": 0,
+    "raw_api_hex": "0x00000000",
+    "query_code": 0,
+    "syscall_code": 0,
+    "syscall_hex": "0x00000000"
+  },
   "summary": {"passed": 23, "failed": 0, "result": "pass"}
 }
 ```

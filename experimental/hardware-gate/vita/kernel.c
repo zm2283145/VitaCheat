@@ -55,6 +55,12 @@ _Static_assert(VITACHEAT_HARDWARE_GATE_FIRMWARE == UINT32_C(0) ||
 
 static vc_hg_service g_hardware_gate = VC_HG_SERVICE_INITIALIZER;
 
+typedef struct native_context {
+    vc_hg_platform_diagnostic diagnostic;
+} native_context;
+
+static native_context g_native_context;
+
 static void native_zero(void *value, SceSize size)
 {
     volatile uint8_t *bytes = (volatile uint8_t *)value;
@@ -74,6 +80,35 @@ static void native_copy(
         *destination++ = *source++;
         --size;
     }
+}
+
+static void native_diagnostic_reset(void *context)
+{
+    native_context *native = (native_context *)context;
+
+    native_zero(&native->diagnostic,
+                sizeof(native->diagnostic));
+}
+
+static void native_diagnostic_fail(
+    void *context,
+    vc_hg_diagnostic_stage stage,
+    int32_t raw_result)
+{
+    native_context *native = (native_context *)context;
+
+    native->diagnostic.stage = (uint32_t)stage;
+    native->diagnostic.raw_result = raw_result;
+}
+
+static bool native_get_diagnostic(
+    void *context,
+    vc_hg_platform_diagnostic *diagnostic)
+{
+    native_context *native = (native_context *)context;
+
+    *diagnostic = native->diagnostic;
+    return true;
 }
 
 static bool native_normalize_text(
@@ -102,9 +137,12 @@ static bool native_get_caller_pid(
 {
     SceUID pid;
 
-    (void)context;
+    native_diagnostic_reset(context);
     pid = ksceKernelGetProcessId();
     if (pid <= 0) {
+        native_diagnostic_fail(
+            context, VC_HG_DIAGNOSTIC_CALLER_PID,
+            (int32_t)pid);
         return false;
     }
     *process_id = (uint32_t)pid;
@@ -115,9 +153,11 @@ static bool native_get_time_us(void *context, uint64_t *now_us)
 {
     SceInt64 value;
 
-    (void)context;
     value = ksceKernelGetSystemTimeWide();
     if (value <= 0) {
+        native_diagnostic_fail(
+            context, VC_HG_DIAGNOSTIC_SYSTEM_TIME,
+            (int32_t)value);
         return false;
     }
     *now_us = (uint64_t)value;
@@ -132,15 +172,24 @@ static bool native_get_title_id(
     char raw_title[VC_HG_TITLE_ID_CAPACITY];
     int result;
 
-    (void)context;
     native_zero(raw_title, sizeof(raw_title));
     native_zero(title_id, VC_HG_TITLE_ID_CAPACITY);
     result = ksceKernelGetProcessTitleId(
         (SceUID)process_id, raw_title, sizeof(raw_title));
-    if (result < 0 ||
-        !native_normalize_text(
+    if (result < 0) {
+        native_diagnostic_fail(
+            context, VC_HG_DIAGNOSTIC_TITLE_QUERY,
+            result);
+        native_zero(raw_title, sizeof(raw_title));
+        native_zero(title_id, VC_HG_TITLE_ID_CAPACITY);
+        return false;
+    }
+    if (!native_normalize_text(
             title_id, VC_HG_TITLE_ID_CAPACITY,
             raw_title, sizeof(raw_title))) {
+        native_diagnostic_fail(
+            context, VC_HG_DIAGNOSTIC_TITLE_NORMALIZE,
+            result);
         native_zero(raw_title, sizeof(raw_title));
         native_zero(title_id, VC_HG_TITLE_ID_CAPACITY);
         return false;
@@ -159,24 +208,67 @@ static bool native_get_main_module(
     SceUInt32 fingerprint = 0u;
     uint32_t index;
     bool ended = false;
+    int result;
 
-    (void)context;
     native_zero(module, sizeof(*module));
     native_zero(&info, sizeof(info));
     info.size = sizeof(info);
     module_id = ksceKernelGetModuleIdByPid((SceUID)process_id);
-    if (module_id <= 0 ||
-        ksceKernelGetModuleInfo(
-            (SceUID)process_id, module_id, &info) < 0 ||
-        info.modid != module_id ||
-        ksceKernelGetModuleFingerprint(
-            module_id, &fingerprint) < 0 ||
-        fingerprint == 0u ||
-        !native_normalize_text(
+    if (module_id <= 0) {
+        native_diagnostic_fail(
+            context, VC_HG_DIAGNOSTIC_MODULE_ID,
+            (int32_t)module_id);
+        native_zero(&info, sizeof(info));
+        native_zero(module, sizeof(*module));
+        return false;
+    }
+    result = ksceKernelGetModuleInfo(
+        (SceUID)process_id, module_id, &info);
+    if (result < 0) {
+        native_diagnostic_fail(
+            context, VC_HG_DIAGNOSTIC_MODULE_INFO,
+            result);
+        native_zero(&info, sizeof(info));
+        native_zero(module, sizeof(*module));
+        return false;
+    }
+    if (info.modid != module_id) {
+        native_diagnostic_fail(
+            context,
+            VC_HG_DIAGNOSTIC_MODULE_ID_MISMATCH,
+            result);
+        native_zero(&info, sizeof(info));
+        native_zero(module, sizeof(*module));
+        return false;
+    }
+    result = ksceKernelGetModuleFingerprint(
+        module_id, &fingerprint);
+    if (result < 0) {
+        native_diagnostic_fail(
+            context,
+            VC_HG_DIAGNOSTIC_MODULE_FINGERPRINT,
+            result);
+        native_zero(&info, sizeof(info));
+        native_zero(module, sizeof(*module));
+        return false;
+    }
+    if (fingerprint == 0u) {
+        native_diagnostic_fail(
+            context,
+            VC_HG_DIAGNOSTIC_MODULE_FINGERPRINT_ZERO,
+            result);
+        native_zero(&info, sizeof(info));
+        native_zero(module, sizeof(*module));
+        return false;
+    }
+    if (!native_normalize_text(
             module->module_name,
             sizeof(module->module_name),
             info.module_name,
             sizeof(info.module_name))) {
+        native_diagnostic_fail(
+            context, VC_HG_DIAGNOSTIC_MODULE_NAME,
+            result);
         native_zero(&info, sizeof(info));
         native_zero(module, sizeof(*module));
         return false;
@@ -198,6 +290,9 @@ static bool native_get_main_module(
             segment->size != sizeof(*segment) ||
             segment->vaddr == NULL ||
             segment->memsz == 0u) {
+            native_diagnostic_fail(
+                context, VC_HG_DIAGNOSTIC_MODULE_SEGMENTS,
+                0);
             native_zero(&info, sizeof(info));
             native_zero(module, sizeof(*module));
             return false;
@@ -210,7 +305,14 @@ static bool native_get_main_module(
         ++module->segment_count;
     }
     native_zero(&info, sizeof(info));
-    return module->segment_count != 0u;
+    if (module->segment_count == 0u) {
+        native_diagnostic_fail(
+            context, VC_HG_DIAGNOSTIC_MODULE_SEGMENTS,
+            0);
+        native_zero(module, sizeof(*module));
+        return false;
+    }
+    return true;
 }
 
 static bool native_copy_from_user(
@@ -220,11 +322,23 @@ static bool native_copy_from_user(
     const void *user_source,
     size_t size)
 {
-    (void)context;
-    return size <= UINT32_MAX &&
-           ksceKernelCopyFromUserProc(
-               (SceUID)process_id, destination,
-               user_source, (SceSize)size) == 0;
+    int result;
+
+    if (size > UINT32_MAX) {
+        native_diagnostic_fail(
+            context, VC_HG_DIAGNOSTIC_REQUEST_COPY, 0);
+        return false;
+    }
+    result = ksceKernelCopyFromUserProc(
+        (SceUID)process_id, destination,
+        user_source, (SceSize)size);
+    if (result != 0) {
+        native_diagnostic_fail(
+            context, VC_HG_DIAGNOSTIC_REQUEST_COPY,
+            result);
+        return false;
+    }
+    return true;
 }
 
 static bool native_copy_to_user(
@@ -234,11 +348,23 @@ static bool native_copy_to_user(
     const void *source,
     size_t size)
 {
-    (void)context;
-    return size <= UINT32_MAX &&
-           ksceKernelCopyToUserProc(
-               (SceUID)process_id, user_destination,
-               source, (SceSize)size) == 0;
+    int result;
+
+    if (size > UINT32_MAX) {
+        native_diagnostic_fail(
+            context, VC_HG_DIAGNOSTIC_RESPONSE_COPY, 0);
+        return false;
+    }
+    result = ksceKernelCopyToUserProc(
+        (SceUID)process_id, user_destination,
+        source, (SceSize)size);
+    if (result != 0) {
+        native_diagnostic_fail(
+            context, VC_HG_DIAGNOSTIC_RESPONSE_COPY,
+            result);
+        return false;
+    }
+    return true;
 }
 
 static bool native_read_process(
@@ -316,6 +442,7 @@ int module_start(SceSize args, void *argp)
     native_zero(&dependencies, sizeof(dependencies));
     native_zero(&config, sizeof(config));
     native_zero(&firmware, sizeof(firmware));
+    native_zero(&g_native_context, sizeof(g_native_context));
     native_copy(
         config.expected_title_id,
         expected_title, sizeof(expected_title));
@@ -334,9 +461,11 @@ int module_start(SceSize args, void *argp)
     dependencies.get_time_us = native_get_time_us;
     dependencies.get_title_id = native_get_title_id;
     dependencies.get_main_module = native_get_main_module;
+    dependencies.get_diagnostic = native_get_diagnostic;
     dependencies.copy_from_user = native_copy_from_user;
     dependencies.copy_to_user = native_copy_to_user;
     dependencies.read_process = native_read_process;
+    dependencies.context = &g_native_context;
     time_us = ksceKernelGetSystemTimeWide();
     first_handle = time_us > 0
                        ? ((uint64_t)time_us << 1u) | UINT64_C(1)
@@ -348,6 +477,8 @@ int module_start(SceSize args, void *argp)
             &g_hardware_gate) != VC_HG_RESULT_OK) {
         native_zero(&g_hardware_gate,
                     sizeof(g_hardware_gate));
+        native_zero(&g_native_context,
+                    sizeof(g_native_context));
         return SCE_KERNEL_START_FAILED;
     }
     return SCE_KERNEL_START_SUCCESS;
@@ -367,5 +498,6 @@ int module_stop(SceSize args, void *argp)
         return SCE_KERNEL_STOP_FAIL;
     }
     native_zero(&g_hardware_gate, sizeof(g_hardware_gate));
+    native_zero(&g_native_context, sizeof(g_native_context));
     return SCE_KERNEL_STOP_SUCCESS;
 }

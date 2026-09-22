@@ -11,6 +11,7 @@ extern "C" {
 #endif
 
 #define VC_HG_ABI_VERSION UINT16_C(1)
+#define VC_HG_STATUS_DIAGNOSTIC_VERSION UINT16_C(2)
 #define VC_HG_TITLE_ID_LENGTH UINT32_C(9)
 #define VC_HG_TITLE_ID_CAPACITY UINT32_C(16)
 #define VC_HG_MODULE_NAME_CAPACITY UINT32_C(28)
@@ -65,6 +66,40 @@ typedef enum vc_hg_result {
     VC_HG_RESULT_STOPPED = -24
 } vc_hg_result;
 
+/*
+ * The first Vita run transported -13 as 0xBFFFFFF3 (bit 30 cleared).
+ * Decode only the gate's narrow, known result range; preserve all SCE errors.
+ */
+static inline int32_t vc_hg_decode_syscall_result(int32_t raw_result) {
+    const uint32_t raw_bits = (uint32_t)raw_result;
+    const int32_t decoded = (int32_t)(raw_bits | UINT32_C(0x40000000));
+
+    if ((raw_bits & UINT32_C(0xC0000000)) == UINT32_C(0x80000000) &&
+        decoded >= (int32_t)VC_HG_RESULT_STOPPED &&
+        decoded < (int32_t)VC_HG_RESULT_OK) {
+        return decoded;
+    }
+    return raw_result;
+}
+
+typedef enum vc_hg_diagnostic_stage {
+    VC_HG_DIAGNOSTIC_NONE = 0,
+    VC_HG_DIAGNOSTIC_CALLER_PID = 1,
+    VC_HG_DIAGNOSTIC_REQUEST_COPY = 2,
+    VC_HG_DIAGNOSTIC_SYSTEM_TIME = 3,
+    VC_HG_DIAGNOSTIC_TITLE_QUERY = 4,
+    VC_HG_DIAGNOSTIC_TITLE_NORMALIZE = 5,
+    VC_HG_DIAGNOSTIC_MODULE_ID = 6,
+    VC_HG_DIAGNOSTIC_MODULE_INFO = 7,
+    VC_HG_DIAGNOSTIC_MODULE_ID_MISMATCH = 8,
+    VC_HG_DIAGNOSTIC_MODULE_FINGERPRINT = 9,
+    VC_HG_DIAGNOSTIC_MODULE_FINGERPRINT_ZERO = 10,
+    VC_HG_DIAGNOSTIC_MODULE_NAME = 11,
+    VC_HG_DIAGNOSTIC_MODULE_SEGMENTS = 12,
+    VC_HG_DIAGNOSTIC_RESPONSE_COPY = 13,
+    VC_HG_DIAGNOSTIC_STAGE_COUNT = 14
+} vc_hg_diagnostic_stage;
+
 typedef enum vc_hg_runtime_status {
     VC_HG_RUNTIME_DISABLED = 0,
     VC_HG_RUNTIME_READY = 1,
@@ -93,6 +128,14 @@ typedef struct vc_hg_status_response {
     uint32_t abi_flags;
     int32_t last_result;
 } vc_hg_status_response;
+
+typedef struct vc_hg_status_response_v2 {
+    vc_hg_status_response base;
+    uint32_t diagnostic_stage;
+    int32_t diagnostic_raw_result;
+    uint32_t reserved0;
+    uint32_t reserved1;
+} vc_hg_status_response_v2;
 
 typedef vc_hg_status_request vc_hg_open_request;
 
@@ -171,6 +214,10 @@ _Static_assert(sizeof(vc_hg_status_request) == 16,
                "hardware-gate status request ABI changed");
 _Static_assert(sizeof(vc_hg_status_response) == 32,
                "hardware-gate status response ABI changed");
+_Static_assert(sizeof(vc_hg_status_response_v2) == 48,
+               "hardware-gate status response v2 ABI changed");
+_Static_assert(offsetof(vc_hg_status_response_v2, diagnostic_stage) == 32,
+               "hardware-gate status response v2 prefix changed");
 _Static_assert(sizeof(vc_hg_open_request) == 16,
                "hardware-gate open request ABI changed");
 _Static_assert(sizeof(vc_hg_open_response) == 40,
@@ -205,6 +252,14 @@ typedef struct vc_hg_module_snapshot {
     vc_hg_segment_snapshot segments[VC_HG_MAX_SEGMENTS];
 } vc_hg_module_snapshot;
 
+typedef struct vc_hg_platform_diagnostic {
+    uint32_t stage;
+    int32_t raw_result;
+} vc_hg_platform_diagnostic;
+
+_Static_assert(sizeof(vc_hg_platform_diagnostic) == 8,
+               "hardware-gate platform diagnostic size changed");
+
 typedef bool (*vc_hg_get_caller_pid_fn)(
     void *context,
     uint32_t *process_id);
@@ -219,6 +274,9 @@ typedef bool (*vc_hg_get_main_module_fn)(
     void *context,
     uint32_t process_id,
     vc_hg_module_snapshot *module);
+typedef bool (*vc_hg_get_diagnostic_fn)(
+    void *context,
+    vc_hg_platform_diagnostic *diagnostic);
 typedef bool (*vc_hg_copy_from_user_fn)(
     void *context,
     uint32_t process_id,
@@ -243,6 +301,7 @@ typedef struct vc_hg_dependencies {
     vc_hg_get_time_us_fn get_time_us;
     vc_hg_get_title_id_fn get_title_id;
     vc_hg_get_main_module_fn get_main_module;
+    vc_hg_get_diagnostic_fn get_diagnostic;
     vc_hg_copy_from_user_fn copy_from_user;
     vc_hg_copy_to_user_fn copy_to_user;
     vc_hg_read_process_fn read_process;
@@ -273,6 +332,8 @@ typedef struct vc_hg_service {
     atomic_uint adapter_active;
     uint64_t next_handle;
     vc_hg_result last_result;
+    uint32_t last_diagnostic_stage;
+    int32_t last_diagnostic_raw_result;
     uint32_t marker;
     bool running;
     bool handle_exhausted;

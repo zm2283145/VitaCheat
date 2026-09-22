@@ -373,6 +373,10 @@ five-call SKPRX ABI and a source-owned `VCHG00001` client on the installed
 VitaSDK. It is not linked to this service and permits only a same-process,
 main-module-segment read of at most 64 bytes. It establishes neither production
 attestation nor foreign-process access. See `docs/hardware-gate.md`.
+The first 3.65 run proved module load and status but failed closed during
+main-module discovery before any read. Its append-only status v2 reports only
+the failed stage and raw API result; it never reports PID, module ID, address,
+segment base, fingerprint, or payload bytes.
 
 The portable scanner contract is C11 plus an integer pointer type (`uintptr_t`)
 wide enough to represent object ranges. That holds for the supported Windows
