@@ -1,8 +1,9 @@
 {
-  "schema": "vitacheat.foreign-target-gate.manual-run.v2",
+  "schema": "vitacheat.foreign-target-gate.manual-run.v3",
   "base": {
     "native_read_gate_commit": "1233c08656a1c219d8de0fd7dde1257986ed3a97",
-    "foreign_generation_gate_parent": "69788273460db9649349c8ec98aab00744649c6b",
+    "foreign_generation_gate_parent": "079055acb349fe8440d7f42473168b7876483381",
+    "startup_diagnostic_parent": "69788273460db9649349c8ec98aab00744649c6b",
     "device_tested_parent_commit": "8d74fad289b050e122c2656c0953da43aadef533",
     "device_tested_parent_result_sha256": "04563275cb1fc45398f1100f4ea9c1aa4874844c7f73db0d7cf7faf0f4b635bc"
   },
@@ -10,6 +11,22 @@
   "titles": {
     "target": "VCFT00001",
     "controller": "VCFC00001"
+  },
+  "rerun_evidence_boundary": {
+    "controller_result_sha256": "ac224bd2cff16bc66bbf34ce45af68de059a4b2e977c0e08546873b83ae7c8ab",
+    "startup_record_sha256": "ecfc504e71207213026c3abb6848bc984ce19c0d65be989823190df3ebef3812",
+    "startup_stage": 6,
+    "startup_results": {
+      "sentinel_lookup": 0,
+      "wrong_caller_open": -13,
+      "layout_write": 0,
+      "fixture_write": 0
+    },
+    "proof": "target user mode reached prompt-ready while OpenExactFixture still observed registry state other than TARGET_STARTED",
+    "non_proof": "does not prove that the start callback never arrives or that a process generation was assigned",
+    "input_count": 0,
+    "handle_or_read_count": 0,
+    "restored": true
   },
   "build": {
     "source": "experimental/foreign-target-gate/vita",
@@ -30,18 +47,56 @@
     },
     {
       "name": "vitacheat-foreign-target-fixture.vpk",
-      "bytes": 6503,
-      "sha256": "fbd4cae8c124674c0b4f802a051e0facc3b815776df2d5893aee2318d30fd881"
+      "bytes": 7643,
+      "sha256": "b4e64cdaeb25f1c3c9df1d6da7acb2505e9a29ccd368b527f3af2e3258459a16"
     },
     {
       "name": "vitacheat-foreign-target-controller.vpk",
-      "bytes": 7366,
-      "sha256": "96a323438b322aa20954e62b3bae303ef883776dd57d9208d0f1a95137c141b3"
+      "bytes": 7514,
+      "sha256": "9cf05f5abe2ae05b876abda6588192e720e9091cbadcaa42c2bde02aabaef883"
     },
     {
       "name": "libVitaCheatForeignGate_stub.a",
       "bytes": 3728,
       "sha256": "63199aafac1662bd6724d6ae1140db3768a822606bf68b157a80c7b0cff6df10"
+    }
+  ],
+  "package_contents": [
+    {
+      "name": "vitacheat-foreign-target-fixture.vpk",
+      "title_id": "VCFT00001",
+      "entries": [
+        {
+          "path": "sce_sys/param.sfo",
+          "bytes": 912,
+          "sha256": "e8c70ff5c23109678c48e285016ae879f8d92a0c1febf79d77cef3d50bb88b7f",
+          "zip_timestamp": "1980-01-01T00:00:00"
+        },
+        {
+          "path": "eboot.bin",
+          "bytes": 10659,
+          "sha256": "404b482bb49ea2a086c1e59c5b7ac3d7ba42ea83d22784ee268035541cebfc87",
+          "zip_timestamp": "1980-01-01T00:00:00"
+        }
+      ]
+    },
+    {
+      "name": "vitacheat-foreign-target-controller.vpk",
+      "title_id": "VCFC00001",
+      "entries": [
+        {
+          "path": "sce_sys/param.sfo",
+          "bytes": 912,
+          "sha256": "d7f8f25c7a1e1141593bed441989010e9b640191ccf338dfd13c4f6627d4a2f6",
+          "zip_timestamp": "1980-01-01T00:00:00"
+        },
+        {
+          "path": "eboot.bin",
+          "bytes": 10516,
+          "sha256": "0bbb33f81fde761be7a99ef2e5023463532c9f6b80dbe53bc0cf2f8637762371",
+          "zip_timestamp": "1980-01-01T00:00:00"
+        }
+      ]
     }
   ],
   "inventories": [
@@ -53,12 +108,31 @@
     "bytes": 80,
     "encoding": "fixed little-endian",
     "magic": "0x53544731",
-    "version": 1,
-    "build_id_hex": "564346472d53544147452d5631000000",
+    "version": 2,
+    "compatible_versions": [
+      1,
+      2
+    ],
+    "build_id_hex": "564346472d53544147452d5632000000",
     "title_id": "VCFT00001",
     "integrity": "FNV-1a-32 over bytes 0 through 75, stored little-endian at bytes 76 through 79",
     "authority": "diagnostic-only; never process-event, generation, module, handle, or read authority",
     "freshness": "controller truncates this exact path and verifies a zero-byte read before each target launch",
+    "readiness_probe": {
+      "retry_only_result": -13,
+      "success_result": -12,
+      "delay_us": 20000,
+      "deadline_us": 2000000,
+      "maximum_attempts": 101,
+      "clock": "documented sceKernelGetSystemTimeWide; nonpositive or rollback fails closed",
+      "recorded_fields": [
+        "uint16 readiness_attempt_count at byte 68",
+        "uint16 readiness_elapsed_ms at byte 70",
+        "int32 readiness_probe_result at byte 72",
+        "int32 last syscall code remains wrong_caller_open_result at byte 52"
+      ],
+      "authority": "target-only observation; retries cannot create registry state, generation, session, handle, or read authority"
+    },
     "stages": [
       {
         "code": 1,
@@ -73,7 +147,7 @@
       {
         "code": 3,
         "name": "wrong-caller-open-complete",
-        "meaning": "target-side OpenExactFixture returned; expected code is -12"
+        "meaning": "bounded target-side OpenExactFixture readiness probe completed; inspect last code, attempts, elapsed, and probe result"
       },
       {
         "code": 4,
@@ -105,7 +179,13 @@
       "-4601": "operation deliberately skipped after an earlier diagnostic failure",
       "-4602": "self module was available but the sentinel was not found in a bounded segment",
       "-4603": "a file write returned zero before the fixed payload completed",
-      "-4604": "a bounded record or fixture serialization failed"
+      "-4604": "a bounded record or fixture serialization failed",
+      "-4605": "the readiness deadline expired while the last kernel result remained target unavailable",
+      "-4606": "the documented monotonic clock was unavailable",
+      "-4607": "the documented monotonic clock moved backward",
+      "-4608": "a wrong-title call unexpectedly returned a nonzero handle",
+      "-4609": "the bounded retry delay failed",
+      "-4610": "the kernel syscall returned a code other than target unavailable or caller-title mismatch"
     },
     "forbidden_fields": [
       "PID",
@@ -125,16 +205,22 @@
     "requires_reboot_before_apps": true
   },
   "prelaunch_freshness": [
+    "Before launch, preserve the complete prior controller result and its exact bytes/hash/run_id when present.",
+    "The controller truncates and verifies zero bytes at ux0:data/vitacheat-foreign-target-result.json before writing schema vitacheat.foreign-target-gate.result.v2 with build_id VCFG-RESULT-V2, a nonzero run_id, and a passing clear-controller-result test.",
+    "An exact preserved prior result is stale waiting evidence, not an anomaly. Ignore it until an empty observation or a complete current-identity document appears.",
+    "A complete current result is fresh only when schema/build/title/firmware/scope match, run_id is nonzero and differs from a preserved v2 run_id, and clear-controller-result passed. A new complete result may be accepted without observing the transient empty file.",
+    "Preserve partial current writes and poll read-only. Reject a structurally complete malformed/current-identity mismatch; never infer tests from a partial document.",
     "Before each generation the controller truncates and verifies zero bytes at ux0:data/vitacheat-foreign-target-layout.bin.",
     "Before each generation the controller truncates and verifies zero bytes at ux0:data/vitacheat-foreign-target-startup.bin.",
     "Before each generation the controller truncates and verifies zero bytes at ux0:data/vitacheat-foreign-target-fixture.json.",
     "Any cleanup/open/close/readback failure is recorded and stops before launch."
   ],
   "run": [
+    "Preserve the prior controller result before launch. During launch polling, treat its exact bytes/hash as stale waiting evidence rather than a test-order failure.",
     "Launch VCFC00001 before VCFT00001.",
-    "Allow the controller to verify target-unavailable, clear all three target evidence paths, and launch VCFT00001.",
+    "Require a complete current controller v2 result with exact build/schema/run identity and passing clear-controller-result; allow the controller to verify target-unavailable, clear all three target evidence paths, and launch VCFT00001.",
     "Poll the startup-stage path read-only. Preserve every distinct invalid/partial byte sequence and continue polling without input.",
-    "Require one complete valid prompt-ready record with exact build/title/schema identity, sentinel result 0, wrong-caller result -12, layout result 0, and fixture result 0.",
+    "Require one complete valid v2 prompt-ready record with exact build/title/schema identity, sentinel result 0, wrong-caller last result -12, readiness probe result 0, a nonzero bounded attempt count and bounded elapsed time, layout result 0, and fixture result 0.",
     "Require the exact 32-byte layout and complete fixture JSON independently; the startup record alone is never target-start or read authority.",
     "Send exactly one documented bounded input: press cross; wait 100ms; release cross.",
     "Allow VCFC00001 to require kernel TARGET_STARTED, read, destroy only VCFT00001, and verify the stale handle.",
@@ -143,6 +229,8 @@
     "Retrieve controller JSON, fixture JSON, startup records/partials, layouts, and all available serial lines beginning VCFG."
   ],
   "expected_tests": [
+    "clear-controller-result",
+    "controller-run-identity",
     "status-ready",
     "controller-before-target-unavailable",
     "clear-fixture-layout",
@@ -174,7 +262,22 @@
     "relaunch-read-sixty-four-exact",
     "close"
   ],
-  "second_run_stop_matrix": [
+  "next_run_stop_matrix": [
+    {
+      "observation": "exact preserved controller result remains visible after launch",
+      "conclusion": "the current controller has not yet proven truncation/current identity",
+      "action": "continue bounded read-only polling; do not compare its old test order to the current kit"
+    },
+    {
+      "observation": "controller result is empty or a current-identity document is partial",
+      "conclusion": "controller truncation/non-atomic rewrite is in progress",
+      "action": "preserve distinct partials and continue bounded read-only polling"
+    },
+    {
+      "observation": "complete controller result has wrong schema/build/run identity or lacks a passing clear-controller-result",
+      "conclusion": "current-run freshness is not established",
+      "action": "send no input and stop"
+    },
     {
       "observation": "startup path absent or zero bytes through timeout",
       "conclusion": "no successful main-entered publication; target main entry and process-event delivery both remain unproven",
@@ -184,6 +287,16 @@
       "observation": "startup bytes are partial, wrong-sized, corrupt, or malformed",
       "conclusion": "an in-place update or write fault was observed; no stage may be inferred",
       "action": "preserve every distinct byte sequence, poll read-only until timeout, send no input"
+    },
+    {
+      "observation": "valid stage 3 with last code -13 and probe result -4605",
+      "conclusion": "target main ran but the kernel registry never became TARGET_STARTED within the two-second readiness deadline; callback delivery remains unproven",
+      "action": "send no input and stop"
+    },
+    {
+      "observation": "valid stage 3 with any unexpected last/probe code, clock failure, delay failure, or handle leak",
+      "conclusion": "the bounded readiness contract failed",
+      "action": "send no input and stop"
     },
     {
       "observation": "valid stage 1 through 5",
@@ -196,7 +309,7 @@
       "action": "send no input and stop"
     },
     {
-      "observation": "valid stage 6 with results 0, -12, 0, 0",
+      "observation": "valid v2 stage 6 with results 0, -12, 0, 0, readiness probe result 0, a nonzero bounded attempt count, and bounded elapsed time",
       "conclusion": "source-owned target is ready for one bounded X; process-event generation is still unproven",
       "action": "also validate layout and fixture JSON, then allow exactly one bounded X"
     },

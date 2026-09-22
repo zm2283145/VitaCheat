@@ -197,24 +197,57 @@ static int write_startup_record(
     return result;
 }
 
-static int wrong_caller_open(void)
+static int32_t readiness_open_exact_fixture(
+    void *context,
+    uint64_t *handle)
 {
     vc_ftg_open_request request;
     vc_ftg_open_response response;
+    int32_t result;
 
+    (void)context;
     memset(&request, 0, sizeof(request));
     memset(&response, 0, sizeof(response));
     request.version = VC_FTG_ABI_VERSION;
     request.struct_size = sizeof(request);
-    return vc_ftg_decode_syscall_result(
+    result = vc_ftg_decode_syscall_result(
         vcfgOpenExactFixture(&request, &response));
+    *handle = response.handle;
+    memset(&request, 0, sizeof(request));
+    memset(&response, 0, sizeof(response));
+    return result;
+}
+
+static bool readiness_get_time(
+    void *context,
+    uint64_t *now_us)
+{
+    const SceInt64 value = sceKernelGetSystemTimeWide();
+
+    (void)context;
+    if (value <= 0) {
+        return false;
+    }
+    *now_us = (uint64_t)value;
+    return true;
+}
+
+static bool readiness_delay(
+    void *context,
+    uint32_t delay_us)
+{
+    (void)context;
+    return sceKernelDelayThread(delay_us) >= 0;
 }
 
 int main(void)
 {
     vc_ftg_startup_record startup;
+    vc_ftg_readiness_dependencies readiness_dependencies;
+    vc_ftg_readiness_observation readiness;
     vc_ftg_fixture_layout layout;
     SceCtrlData pad;
+    bool caller_ready;
     bool layout_ok;
     bool input_consumed = false;
     int sentinel_result;
@@ -224,6 +257,17 @@ int main(void)
     int launch_result = 0;
 
     vc_ftg_startup_record_init(&startup);
+    memset(
+        &readiness_dependencies,
+        0,
+        sizeof(readiness_dependencies));
+    readiness_dependencies.open_exact_fixture =
+        readiness_open_exact_fixture;
+    readiness_dependencies.get_time_us =
+        readiness_get_time;
+    readiness_dependencies.delay_us =
+        readiness_delay;
+    memset(&readiness, 0, sizeof(readiness));
     if (write_startup_record(&startup) < 0) {
         return 1;
     }
@@ -236,12 +280,16 @@ int main(void)
         write_startup_record(&startup) < 0) {
         return 1;
     }
-    caller_result = wrong_caller_open();
-    if (!vc_ftg_startup_record_complete(
+    caller_ready = vc_ftg_probe_wrong_caller_readiness(
+        &readiness_dependencies, &readiness);
+    caller_result = readiness.last_result;
+    if (!vc_ftg_startup_record_complete_readiness(
             &startup,
-            VC_FTG_STARTUP_STAGE_WRONG_CALLER_OPEN_COMPLETE,
-            caller_result) ||
+            &readiness) ||
         write_startup_record(&startup) < 0) {
+        return 1;
+    }
+    if (!caller_ready) {
         return 1;
     }
     layout.wrong_caller_open_result = caller_result;

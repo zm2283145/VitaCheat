@@ -1,5 +1,6 @@
 #include "fixture_protocol.h"
 #include "vitacheat/foreign_target_gate.h"
+#include "vitacheat/foreign_target_startup.h"
 
 #include <psp2/appmgr.h>
 #include <psp2/io/fcntl.h>
@@ -34,6 +35,7 @@ typedef struct controller_state {
     uint32_t result_count;
     uint32_t passed;
     uint32_t failed;
+    uint64_t run_id;
 } controller_state;
 
 static bool write_all(
@@ -74,12 +76,16 @@ static void write_results(const controller_state *state)
         line,
         sizeof(line),
         "{\n"
-        "  \"schema\":\"vitacheat.foreign-target-gate.result.v1\",\n"
+        "  \"schema\":\"" VC_FTG_CONTROLLER_RESULT_SCHEMA "\",\n"
+        "  \"build_id\":\"" VC_FTG_CONTROLLER_RESULT_BUILD_ID "\",\n"
+        "  \"run_id\":\"%08x%08x\",\n"
         "  \"target_title_id\":\"%s\",\n"
         "  \"controller_title_id\":\"VCFC00001\",\n"
         "  \"target_firmware\":\"3.65\",\n"
         "  \"scope\":\"source-owned-foreign-generation-read\",\n"
         "  \"tests\":[\n",
+        (unsigned int)(state->run_id >> 32u),
+        (unsigned int)state->run_id,
         VITACHEAT_FOREIGN_GATE_TARGET_TITLE_ID);
     if (size > 0 && (size_t)size < sizeof(line)) {
         (void)write_all(fd, line, (size_t)size);
@@ -308,10 +314,37 @@ int main(void)
     vc_ftg_fixture_layout layout;
     uint64_t first_handle = 0u;
     uint64_t second_handle = 0u;
+    SceInt64 run_time;
     int result;
 
     memset(&state, 0, sizeof(state));
-    write_results(&state);
+    run_time = sceKernelGetSystemTimeWide();
+    if (run_time > 0) {
+        state.run_id = (uint64_t)run_time;
+    }
+    {
+        const bool result_cleared =
+            clear_artifact(VC_FTG_CONTROLLER_RESULT_PATH);
+
+        if (!record_result(
+                &state,
+                "clear-controller-result",
+                result_cleared,
+                result_cleared
+                    ? VC_FTG_RESULT_OK
+                    : VC_FTG_RESULT_PLATFORM_FAILURE)) {
+            goto finish;
+        }
+    }
+    if (!record_result(
+            &state,
+            "controller-run-identity",
+            state.run_id != 0u,
+            state.run_id != 0u
+                ? VC_FTG_RESULT_OK
+                : VC_FTG_RESULT_PLATFORM_FAILURE)) {
+        goto finish;
+    }
     result = get_status(&status);
     if (!record_result(
             &state,

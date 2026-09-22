@@ -1,8 +1,12 @@
 #include "vitacheat/foreign_target_startup.h"
+#include "vitacheat/foreign_target_gate.h"
 
-static const uint8_t g_startup_build_id[
+static const uint8_t g_startup_build_id_v1[
     VC_FTG_STARTUP_BUILD_ID_SIZE] =
-        VC_FTG_STARTUP_BUILD_ID_BYTES;
+        VC_FTG_STARTUP_BUILD_ID_V1_BYTES;
+static const uint8_t g_startup_build_id_v2[
+    VC_FTG_STARTUP_BUILD_ID_SIZE] =
+        VC_FTG_STARTUP_BUILD_ID_V2_BYTES;
 static const uint8_t g_startup_title_id[
     VC_FTG_STARTUP_TITLE_ID_SIZE] =
         VC_FTG_STARTUP_TARGET_TITLE_BYTES;
@@ -52,12 +56,26 @@ static void startup_store_u32(
     output[3] = (uint8_t)(value >> 24u);
 }
 
+static void startup_store_u16(
+    uint8_t *output,
+    uint16_t value)
+{
+    output[0] = (uint8_t)value;
+    output[1] = (uint8_t)(value >> 8u);
+}
+
 static uint32_t startup_load_u32(const uint8_t *input)
 {
     return (uint32_t)input[0] |
            ((uint32_t)input[1] << 8u) |
            ((uint32_t)input[2] << 16u) |
            ((uint32_t)input[3] << 24u);
+}
+
+static uint16_t startup_load_u16(const uint8_t *input)
+{
+    return (uint16_t)((uint16_t)input[0] |
+                      ((uint16_t)input[1] << 8u));
 }
 
 static int32_t startup_load_i32(const uint8_t *input)
@@ -120,34 +138,85 @@ static uint32_t startup_expected_results(uint32_t stage)
 static bool startup_fields_valid(
     const vc_ftg_startup_record *record)
 {
-    uint32_t index;
     const uint32_t expected =
         startup_expected_results(record->stage);
+    const uint8_t *expected_build_id;
 
     if (record->magic != VC_FTG_STARTUP_MAGIC ||
-        record->version != VC_FTG_STARTUP_VERSION ||
         record->struct_size != VC_FTG_STARTUP_RECORD_SIZE ||
         expected == UINT32_MAX ||
         record->completed_results != expected ||
-        !startup_equal(
-            record->build_id,
-            g_startup_build_id,
-            sizeof(record->build_id)) ||
         !startup_equal(
             record->title_id,
             g_startup_title_id,
             sizeof(record->title_id))) {
         return false;
     }
-    for (index = 0u;
-         index < sizeof(record->reserved) /
-                     sizeof(record->reserved[0]);
-         ++index) {
-        if (record->reserved[index] != 0u) {
+    if (record->version == VC_FTG_STARTUP_VERSION_V1) {
+        expected_build_id = g_startup_build_id_v1;
+        if (record->readiness_attempt_count != 0u ||
+            record->readiness_elapsed_ms != 0u ||
+            record->readiness_probe_result != 0) {
             return false;
         }
+    } else if (record->version == VC_FTG_STARTUP_VERSION_V2) {
+        expected_build_id = g_startup_build_id_v2;
+        if (record->stage <
+                VC_FTG_STARTUP_STAGE_WRONG_CALLER_OPEN_COMPLETE) {
+            if (record->readiness_attempt_count != 0u ||
+                record->readiness_elapsed_ms != 0u ||
+                record->readiness_probe_result != 0) {
+                return false;
+            }
+        } else {
+            if (record->readiness_attempt_count >
+                    VC_FTG_READINESS_MAX_ATTEMPTS) {
+                return false;
+            }
+            if (record->readiness_attempt_count == 0u &&
+                (record->readiness_probe_result !=
+                     VC_FTG_STARTUP_STATUS_CLOCK_UNAVAILABLE ||
+                 record->readiness_elapsed_ms != 0u ||
+                 record->wrong_caller_open_result !=
+                     VC_FTG_RESULT_TARGET_UNAVAILABLE)) {
+                return false;
+            }
+            if (record->readiness_probe_result ==
+                    VC_FTG_RESULT_OK &&
+                (record->readiness_attempt_count == 0u ||
+                 record->readiness_elapsed_ms >
+                     (uint16_t)(
+                         VC_FTG_READINESS_DEADLINE_US /
+                         UINT64_C(1000)) ||
+                 record->wrong_caller_open_result !=
+                     VC_FTG_RESULT_CALLER_TITLE_MISMATCH)) {
+                return false;
+            }
+            if (record->readiness_probe_result ==
+                    VC_FTG_STARTUP_STATUS_READINESS_TIMEOUT &&
+                (record->readiness_attempt_count == 0u ||
+                 (record->wrong_caller_open_result !=
+                      VC_FTG_RESULT_TARGET_UNAVAILABLE &&
+                  record->wrong_caller_open_result !=
+                      VC_FTG_RESULT_CALLER_TITLE_MISMATCH))) {
+                return false;
+            }
+            if (record->stage >
+                    VC_FTG_STARTUP_STAGE_WRONG_CALLER_OPEN_COMPLETE &&
+                (record->wrong_caller_open_result !=
+                     VC_FTG_RESULT_CALLER_TITLE_MISMATCH ||
+                 record->readiness_probe_result !=
+                     VC_FTG_RESULT_OK)) {
+                return false;
+            }
+        }
+    } else {
+        return false;
     }
-    return true;
+    return startup_equal(
+        record->build_id,
+        expected_build_id,
+        sizeof(record->build_id));
 }
 
 static void startup_encode_fields(
@@ -184,8 +253,13 @@ static void startup_encode_fields(
     startup_store_u32(
         output + 64u,
         (uint32_t)record->controller_launch_result);
-    startup_store_u32(output + 68u, record->reserved[0]);
-    startup_store_u32(output + 72u, record->reserved[1]);
+    startup_store_u16(
+        output + 68u, record->readiness_attempt_count);
+    startup_store_u16(
+        output + 70u, record->readiness_elapsed_ms);
+    startup_store_u32(
+        output + 72u,
+        (uint32_t)record->readiness_probe_result);
 }
 
 void vc_ftg_startup_record_init(
@@ -201,7 +275,7 @@ void vc_ftg_startup_record_init(
     record->stage = VC_FTG_STARTUP_STAGE_MAIN_ENTERED;
     startup_copy(
         record->build_id,
-        g_startup_build_id,
+        g_startup_build_id_v2,
         sizeof(record->build_id));
     startup_copy(
         record->title_id,
@@ -228,6 +302,9 @@ bool vc_ftg_startup_record_complete(
         result_field = &record->sentinel_lookup_result;
         break;
     case VC_FTG_STARTUP_STAGE_WRONG_CALLER_OPEN_COMPLETE:
+        if (record->version != VC_FTG_STARTUP_VERSION_V1) {
+            return false;
+        }
         result_flag = VC_FTG_STARTUP_RESULT_WRONG_CALLER_OPEN;
         result_field = &record->wrong_caller_open_result;
         break;
@@ -250,6 +327,35 @@ bool vc_ftg_startup_record_complete(
     *result_field = result;
     record->completed_results |= result_flag;
     record->stage = (uint32_t)stage;
+    record->integrity = 0u;
+    return startup_fields_valid(record);
+}
+
+bool vc_ftg_startup_record_complete_readiness(
+    vc_ftg_startup_record *record,
+    const vc_ftg_readiness_observation *observation)
+{
+    if (record == NULL || observation == NULL ||
+        record->version != VC_FTG_STARTUP_VERSION_V2 ||
+        !startup_fields_valid(record) ||
+        record->stage !=
+            VC_FTG_STARTUP_STAGE_SENTINEL_LOOKUP_COMPLETE ||
+        observation->attempt_count >
+            VC_FTG_READINESS_MAX_ATTEMPTS) {
+        return false;
+    }
+    record->wrong_caller_open_result =
+        observation->last_result;
+    record->readiness_attempt_count =
+        observation->attempt_count;
+    record->readiness_elapsed_ms =
+        observation->elapsed_ms;
+    record->readiness_probe_result =
+        observation->probe_result;
+    record->completed_results |=
+        VC_FTG_STARTUP_RESULT_WRONG_CALLER_OPEN;
+    record->stage =
+        VC_FTG_STARTUP_STAGE_WRONG_CALLER_OPEN_COMPLETE;
     record->integrity = 0u;
     return startup_fields_valid(record);
 }
@@ -321,8 +427,12 @@ bool vc_ftg_startup_record_decode(
         startup_load_i32(input + 60u);
     decoded.controller_launch_result =
         startup_load_i32(input + 64u);
-    decoded.reserved[0] = startup_load_u32(input + 68u);
-    decoded.reserved[1] = startup_load_u32(input + 72u);
+    decoded.readiness_attempt_count =
+        startup_load_u16(input + 68u);
+    decoded.readiness_elapsed_ms =
+        startup_load_u16(input + 70u);
+    decoded.readiness_probe_result =
+        startup_load_i32(input + 72u);
     decoded.integrity = startup_load_u32(input + 76u);
     expected_integrity = startup_integrity(input, 76u);
     if (decoded.integrity != expected_integrity ||
@@ -354,6 +464,195 @@ bool vc_ftg_startup_record_validate(
     startup_zero(encoded, sizeof(encoded));
     startup_zero(&encoded_record, sizeof(encoded_record));
     return valid;
+}
+
+static uint16_t startup_elapsed_ms(uint64_t elapsed_us)
+{
+    const uint64_t rounded =
+        (elapsed_us + UINT64_C(999)) / UINT64_C(1000);
+
+    return rounded > UINT16_MAX
+        ? UINT16_MAX
+        : (uint16_t)rounded;
+}
+
+bool vc_ftg_probe_wrong_caller_readiness(
+    const vc_ftg_readiness_dependencies *dependencies,
+    vc_ftg_readiness_observation *observation)
+{
+    uint64_t start_us;
+    uint64_t now_us;
+    uint64_t elapsed_us;
+    uint64_t handle;
+    uint32_t delay_us;
+    int32_t result;
+
+    if (observation == NULL) {
+        return false;
+    }
+    startup_zero(observation, sizeof(*observation));
+    observation->last_result =
+        VC_FTG_RESULT_TARGET_UNAVAILABLE;
+    observation->probe_result =
+        VC_FTG_STARTUP_STATUS_CLOCK_UNAVAILABLE;
+    if (dependencies == NULL ||
+        dependencies->open_exact_fixture == NULL ||
+        dependencies->get_time_us == NULL ||
+        dependencies->delay_us == NULL ||
+        !dependencies->get_time_us(
+            dependencies->context, &start_us)) {
+        return false;
+    }
+    for (;;) {
+        if (observation->attempt_count != 0u) {
+            if (!dependencies->get_time_us(
+                    dependencies->context, &now_us)) {
+                observation->probe_result =
+                    VC_FTG_STARTUP_STATUS_CLOCK_UNAVAILABLE;
+                return false;
+            }
+            if (now_us < start_us) {
+                observation->probe_result =
+                    VC_FTG_STARTUP_STATUS_CLOCK_ROLLBACK;
+                return false;
+            }
+            elapsed_us = now_us - start_us;
+            observation->elapsed_ms =
+                startup_elapsed_ms(elapsed_us);
+            if (elapsed_us >
+                    VC_FTG_READINESS_DEADLINE_US) {
+                observation->probe_result =
+                    VC_FTG_STARTUP_STATUS_READINESS_TIMEOUT;
+                return false;
+            }
+        }
+        handle = 0u;
+        result = dependencies->open_exact_fixture(
+            dependencies->context, &handle);
+        if (observation->attempt_count ==
+            VC_FTG_READINESS_MAX_ATTEMPTS) {
+            observation->probe_result =
+                VC_FTG_STARTUP_STATUS_READINESS_TIMEOUT;
+            return false;
+        }
+        ++observation->attempt_count;
+        observation->last_result = result;
+        if (!dependencies->get_time_us(
+                dependencies->context, &now_us)) {
+            observation->probe_result =
+                VC_FTG_STARTUP_STATUS_CLOCK_UNAVAILABLE;
+            return false;
+        }
+        if (now_us < start_us) {
+            observation->probe_result =
+                VC_FTG_STARTUP_STATUS_CLOCK_ROLLBACK;
+            return false;
+        }
+        elapsed_us = now_us - start_us;
+        observation->elapsed_ms =
+            startup_elapsed_ms(elapsed_us);
+        if (handle != 0u) {
+            observation->probe_result =
+                VC_FTG_STARTUP_STATUS_HANDLE_LEAK;
+            return false;
+        }
+        if (elapsed_us > VC_FTG_READINESS_DEADLINE_US) {
+            observation->probe_result =
+                VC_FTG_STARTUP_STATUS_READINESS_TIMEOUT;
+            return false;
+        }
+        if (result ==
+            VC_FTG_RESULT_CALLER_TITLE_MISMATCH) {
+            observation->probe_result = VC_FTG_RESULT_OK;
+            return true;
+        }
+        if (result != VC_FTG_RESULT_TARGET_UNAVAILABLE) {
+            observation->probe_result =
+                VC_FTG_STARTUP_STATUS_UNEXPECTED_RESULT;
+            return false;
+        }
+        if (elapsed_us == VC_FTG_READINESS_DEADLINE_US ||
+            observation->attempt_count ==
+                VC_FTG_READINESS_MAX_ATTEMPTS) {
+            observation->probe_result =
+                VC_FTG_STARTUP_STATUS_READINESS_TIMEOUT;
+            return false;
+        }
+        delay_us = VC_FTG_READINESS_DELAY_US;
+        if ((uint64_t)delay_us >
+            VC_FTG_READINESS_DEADLINE_US - elapsed_us) {
+            delay_us = (uint32_t)(
+                VC_FTG_READINESS_DEADLINE_US - elapsed_us);
+        }
+        if (delay_us == 0u ||
+            !dependencies->delay_us(
+                dependencies->context, delay_us)) {
+            observation->probe_result =
+                VC_FTG_STARTUP_STATUS_DELAY_FAILED;
+            return false;
+        }
+    }
+}
+
+void vc_ftg_result_freshness_init(
+    vc_ftg_result_freshness *freshness,
+    uint64_t preserved_run_id)
+{
+    if (freshness == NULL) {
+        return;
+    }
+    startup_zero(freshness, sizeof(*freshness));
+    freshness->preserved_run_id = preserved_run_id;
+}
+
+vc_ftg_result_freshness_action vc_ftg_result_freshness_observe(
+    vc_ftg_result_freshness *freshness,
+    vc_ftg_result_observation_kind kind,
+    bool current_identity_valid,
+    bool clear_result_passed,
+    uint64_t run_id)
+{
+    if (freshness == NULL) {
+        return VC_FTG_RESULT_FRESHNESS_REJECT;
+    }
+    if (freshness->accepted) {
+        if (kind ==
+                VC_FTG_RESULT_OBSERVATION_CURRENT_PARTIAL) {
+            return VC_FTG_RESULT_FRESHNESS_WAIT;
+        }
+        if (kind ==
+                VC_FTG_RESULT_OBSERVATION_CURRENT_COMPLETE &&
+            current_identity_valid &&
+            clear_result_passed &&
+            run_id == freshness->current_run_id) {
+            return VC_FTG_RESULT_FRESHNESS_ACCEPT;
+        }
+        return VC_FTG_RESULT_FRESHNESS_REJECT;
+    }
+    switch (kind) {
+    case VC_FTG_RESULT_OBSERVATION_STALE_PRIOR:
+    case VC_FTG_RESULT_OBSERVATION_CURRENT_PARTIAL:
+        return VC_FTG_RESULT_FRESHNESS_WAIT;
+    case VC_FTG_RESULT_OBSERVATION_EMPTY:
+        freshness->saw_empty = true;
+        return VC_FTG_RESULT_FRESHNESS_WAIT;
+    case VC_FTG_RESULT_OBSERVATION_CURRENT_COMPLETE:
+        if (!current_identity_valid ||
+            !clear_result_passed ||
+            run_id == 0u ||
+            (freshness->preserved_run_id != 0u &&
+             run_id == freshness->preserved_run_id) ||
+            (freshness->current_run_id != 0u &&
+             run_id != freshness->current_run_id)) {
+            return VC_FTG_RESULT_FRESHNESS_REJECT;
+        }
+        freshness->current_run_id = run_id;
+        freshness->accepted = true;
+        return VC_FTG_RESULT_FRESHNESS_ACCEPT;
+    case VC_FTG_RESULT_OBSERVATION_CURRENT_MALFORMED:
+    default:
+        return VC_FTG_RESULT_FRESHNESS_REJECT;
+    }
 }
 
 const char *vc_ftg_startup_stage_name(

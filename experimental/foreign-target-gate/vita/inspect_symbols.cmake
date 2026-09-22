@@ -60,6 +60,7 @@ set(expected_target_symbols
     sceKernelGetMemBlockBase
     sceKernelGetModuleIdByAddr
     sceKernelGetModuleInfo
+    sceKernelGetSystemTimeWide
     sceKernelGetTLSAddr
     sceKernelGetThreadId
     sceKernelLockLwMutex
@@ -86,6 +87,7 @@ set(expected_controller_symbols
     sceKernelExitProcess
     sceKernelFreeMemBlock
     sceKernelGetMemBlockBase
+    sceKernelGetSystemTimeWide
     sceKernelGetTLSAddr
     sceKernelGetThreadId
     sceKernelLockLwMutex

@@ -404,19 +404,24 @@ static void test_startup_marker_cannot_authorize(void)
 {
     fixture fixture_value;
     vc_ftg_startup_record startup;
+    vc_ftg_readiness_observation readiness;
     vc_ftg_open_request request;
     vc_ftg_open_response response;
 
     initialize_fixture(&fixture_value, true);
+    memset(&readiness, 0, sizeof(readiness));
+    readiness.attempt_count = 3u;
+    readiness.elapsed_ms = 40u;
+    readiness.last_result =
+        VC_FTG_RESULT_CALLER_TITLE_MISMATCH;
+    readiness.probe_result = VC_FTG_RESULT_OK;
     vc_ftg_startup_record_init(&startup);
     CHECK(vc_ftg_startup_record_complete(
         &startup,
         VC_FTG_STARTUP_STAGE_SENTINEL_LOOKUP_COMPLETE,
         0));
-    CHECK(vc_ftg_startup_record_complete(
-        &startup,
-        VC_FTG_STARTUP_STAGE_WRONG_CALLER_OPEN_COMPLETE,
-        VC_FTG_RESULT_CALLER_TITLE_MISMATCH));
+    CHECK(vc_ftg_startup_record_complete_readiness(
+        &startup, &readiness));
     CHECK(vc_ftg_startup_record_complete(
         &startup,
         VC_FTG_STARTUP_STAGE_LAYOUT_WRITE_COMPLETE,

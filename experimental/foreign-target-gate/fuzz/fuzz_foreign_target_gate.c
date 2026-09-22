@@ -172,6 +172,8 @@ static void fuzz_startup_protocol(
 {
     vc_ftg_startup_record record;
     vc_ftg_startup_record decoded;
+    vc_ftg_readiness_observation readiness;
+    vc_ftg_result_freshness freshness;
     uint8_t encoded[VC_FTG_STARTUP_RECORD_SIZE];
     const int32_t result = (int32_t)fuzz_u64(data, size);
     const uint8_t final_stage =
@@ -184,6 +186,18 @@ static void fuzz_startup_protocol(
     }
 
     vc_ftg_startup_record_init(&record);
+    memset(&readiness, 0, sizeof(readiness));
+    readiness.attempt_count =
+        (uint16_t)(1u +
+            (fuzz_u64(data, size) %
+             VC_FTG_READINESS_MAX_ATTEMPTS));
+    readiness.elapsed_ms =
+        (uint16_t)(fuzz_u64(data, size) %
+            (VC_FTG_READINESS_DEADLINE_US /
+             UINT64_C(1000) + UINT64_C(1)));
+    readiness.last_result =
+        VC_FTG_RESULT_CALLER_TITLE_MISMATCH;
+    readiness.probe_result = VC_FTG_RESULT_OK;
     if (final_stage >= 1u) {
         fuzz_check(vc_ftg_startup_record_complete(
             &record,
@@ -191,10 +205,8 @@ static void fuzz_startup_protocol(
             result));
     }
     if (final_stage >= 2u) {
-        fuzz_check(vc_ftg_startup_record_complete(
-            &record,
-            VC_FTG_STARTUP_STAGE_WRONG_CALLER_OPEN_COMPLETE,
-            result));
+        fuzz_check(vc_ftg_startup_record_complete_readiness(
+            &record, &readiness));
     }
     if (final_stage >= 3u) {
         fuzz_check(vc_ftg_startup_record_complete(
@@ -234,6 +246,17 @@ static void fuzz_startup_protocol(
         fuzz_check(!vc_ftg_startup_record_decode(
             encoded, sizeof(encoded), &decoded));
     }
+
+    vc_ftg_result_freshness_init(
+        &freshness, fuzz_u64(data, size));
+    (void)vc_ftg_result_freshness_observe(
+        &freshness,
+        (vc_ftg_result_observation_kind)(
+            size == 0u ? 0u : data[0] % 5u),
+        size > 1u && (data[1] & 1u) != 0u,
+        size > 1u && (data[1] & 2u) != 0u,
+        fuzz_u64(data + (size > 1u ? 1u : 0u),
+                 size > 1u ? size - 1u : 0u));
 }
 
 static void fuzz_initialize(

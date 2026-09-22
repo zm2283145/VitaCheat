@@ -64,17 +64,18 @@ already proven fixed bounce chain. User mode cannot provide an authoritative
 PID, title, module UID, fingerprint, generation, revision, or address.
 
 The foreign gate is currently host- and Vita-cross-build validated only. Its
-first device attempt stopped before input/read when no target artifact became
-observable, and therefore did not prove process-event ordering, two-VPK
-suspend/resume residency, foreign-copy behavior, or unregister quiescence. An
-80-byte source-owned startup record now exposes only bounded target progress
-and return codes. It contains no PID, generation, revision, module identity,
-fingerprint, or address; controller-side truncation provides freshness, and
-FNV integrity rejects partial/malformed reads. It never reconciles or
-authorizes a process. A pre-registration fixture remains unavailable, and any
-later start without a matching create fails closed. The manual protocol
-requires boot registration and reboot cleanup. None of this grants the
-portable production service a native adapter.
+first device attempt stopped before target observability; a diagnostic rerun
+reached prompt-ready while the event registry was still unavailable at the
+fixture's immediate wrong-caller check. Neither run sent input or performed a
+foreign read. The 80-byte source-owned startup record now includes only a
+bounded two-second readiness observation: attempts, elapsed time, last result,
+and local probe status. It retries only target-unavailable and accepts only
+wrong-caller rejection with no returned handle. It contains no PID,
+generation, revision, module identity, fingerprint, or address and never
+reconciles or authorizes a process. Controller-side truncation plus explicit
+schema/build/run identity prevents preserved old output from becoming current
+evidence. Process-event timing, two-VPK suspend/resume residency, foreign-copy
+behavior, and unregister quiescence remain unproven.
 
 ## Authority model
 
@@ -342,11 +343,18 @@ does not satisfy any of those requirements.
   verified empty before each launch, excludes kernel identity/address fields,
   and can never satisfy the controller's mandatory kernel `TARGET_STARTED`
   check or authorize an open/read.
+- The target retries only `TARGET_UNAVAILABLE` for at most two seconds and
+  accepts only exact wrong-caller rejection with a zero handle. Clock rollback,
+  timeout, delay failure, handle leakage, or any other result exits before
+  prompt-ready.
+- The controller result is truncated and verified empty before it publishes a
+  versioned build identity and nonzero run identity. Exact preserved bytes and
+  partial rewrites are waiting evidence, never current test results.
 - Stop unregisters the stored callback UID but always refuses runtime unload
   after a successful registration; reboot is mandatory because VitaSDK does
   not document callback drain semantics.
-- No device pass exists yet; the first attempt stopped before input/read and
-  the diagnostic revision has not been run. See
+- No device pass exists yet; both guarded attempts stopped before input/read,
+  and this bounded race correction has not been run. See
   `docs/foreign-target-generation-gate.md` for the exact non-claims and manual
   protocol.
 
