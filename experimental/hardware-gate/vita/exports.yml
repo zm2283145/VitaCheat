@@ -1,0 +1,22 @@
+VitaCheatHardwareGate:
+  nid: 0x67589133
+  attributes: 7
+  process_image: false
+  imagemodule: false
+  version:
+    major: 1
+    minor: 0
+  main:
+    start: module_start
+    stop: module_stop
+  libraries:
+    VitaCheatHardwareGate:
+      syscall: true
+      version: 1
+      nid: 0x56434847
+      functions:
+        - vchgGetStatus: 0xD62A0D75
+        - vchgOpenSelf: 0xF4B684B1
+        - vchgGetSelfMainModule: 0x2E3A51C7
+        - vchgReadSelfSegment: 0x8C97E420
+        - vchgClose: 0x4A6FD239

@@ -367,12 +367,12 @@ overlay reopen, presentation loss, process exit, plugin unload, reset, and stop
 scrub both session and journal immediately. Public status text is coarse and
 contains no address, token, identity, module, revision, or payload data.
 
-This remains host-first. No verified VitaSDK/taiHEN generation source, native
-attested transport, or safe process-memory read API meeting the callback
-contract is pinned, so no `.skprx`, syscall stub, firmware offset, or hardware
-claim is added. Tests use explicit synthetic `PCSA00133` module-0/segment-1
-facts only. Native injection, renderer/input hooks, menu/search UI, measured
-manifests, write/rollback capability, and hardware gates remain separate work.
+The production service remains host-first and has no native adapter. A separate
+opt-in experiment in `experimental/hardware-gate/` now compile/link-validates a
+five-call SKPRX ABI and a source-owned `VCHG00001` client on the installed
+VitaSDK. It is not linked to this service and permits only a same-process,
+main-module-segment read of at most 64 bytes. It establishes neither production
+attestation nor foreign-process access. See `docs/hardware-gate.md`.
 
 The portable scanner contract is C11 plus an integer pointer type (`uintptr_t`)
 wide enough to represent object ranges. That holds for the supported Windows
@@ -394,11 +394,12 @@ rather than one general memory service:
 6. apply typed writes or freezes from declarative records;
 7. restore state and release target ownership on every exit path.
 
-None of these capabilities is represented by the v1 operation or capability
-mask; unknown operations and bits fail closed. The current Vita target remains
-a buffer-only user-mode self-test. Cross-process access, kernel hooks,
-user-plugin injection, and overlay rendering are later milestones with their
-own threat models and hardware evidence.
+None of these capabilities is represented by the production v1 operation or
+capability mask; unknown operations and bits fail closed. The ordinary Vita
+self-test remains buffer-only. The separate native hardware gate uses a
+disposable namespace solely to test the SDK's same-process per-PID copy path;
+cross-process access, kernel hooks, user-plugin injection, and overlay
+rendering remain later milestones with their own threat models and evidence.
 
 ## Future native Quick Menu launcher and injected in-game menu
 
@@ -527,3 +528,13 @@ host-side utilities from VitaDebugger, especially build identity,
 module-relative addresses, bounded framing, stop ownership, watchdog cleanup,
 logging, profiling, and VitaDevDeploy integration. Sharing a reviewed component
 later is preferable to copying experimental debugger internals now.
+
+The native hardware gate uses VitaDebugger commit
+`c01a38690897e71b673429e7f872aad7dbd31411` only as behavioral evidence for
+boot-loaded SKPRX, generated-stub, caller-PID, bounded-copy, and cleanup
+patterns. The unlicensed implementation is not copied. kuBridge commit
+`417ddde9a744eba98d769382c1c1372b8e119139` is likewise evidence only: none of
+its unrestricted memcpy, allocation, protection, cache, exception, or RWX
+interfaces is linked or wrapped. Original z06 commit
+`bb8158a1c696914a8ea2299889d42ab9a57a3ab2` demonstrates the unsafe
+36-syscall/direct-write design that this gate rejects.

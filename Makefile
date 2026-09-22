@@ -25,6 +25,11 @@ LAUNCH_CLAIMANT_FUZZ_SMOKE_BIN := $(BUILD_DIR)/vitacheat_launch_claimant_fuzz_sm
 MENU_COORDINATOR_FUZZ_SMOKE_BIN := $(BUILD_DIR)/vitacheat_menu_coordinator_fuzz_smoke
 TARGET_ATTESTATION_FUZZ_SMOKE_BIN := $(BUILD_DIR)/vitacheat_target_attestation_fuzz_smoke
 MEMORY_SERVICE_FUZZ_SMOKE_BIN := $(BUILD_DIR)/vitacheat_memory_service_fuzz_smoke
+HARDWARE_GATE_TEST_BIN := $(BUILD_DIR)/vitacheat_hardware_gate_tests
+HARDWARE_GATE_FUZZ_SMOKE_BIN := $(BUILD_DIR)/vitacheat_hardware_gate_fuzz_smoke
+HARDWARE_GATE_SOURCE := experimental/hardware-gate/src/hardware_gate.c
+HARDWARE_GATE_HEADER := experimental/hardware-gate/include/vitacheat/hardware_gate.h
+HARDWARE_GATE_CPPFLAGS := -Iexperimental/hardware-gate/include
 TEST_BINS := $(SEARCH_TEST_BIN) $(PSV_TEST_BIN) $(ACTIVATION_TEST_BIN) \
 	$(PAUSE_TEST_BIN) $(LAUNCH_BROKER_TEST_BIN) $(LAUNCH_SERVICE_TEST_BIN) \
 	$(QUICK_MENU_LAUNCHER_TEST_BIN) $(LAUNCH_CLAIMANT_TEST_BIN) \
@@ -68,6 +73,7 @@ VITA_PORTABLE_CHECK_OBJECTS := $(VITA_BUILD_DIR)/pause-portable.o \
 .PHONY: all test launch-service-fuzz-smoke quick-menu-launcher-fuzz-smoke \
 	launch-claimant-fuzz-smoke menu-coordinator-fuzz-smoke \
 	target-attestation-fuzz-smoke memory-service-fuzz-smoke \
+	hardware-gate-test hardware-gate-fuzz-smoke hardware-gate-analyze \
 	analyze vita-self-test clean
 
 all: $(TEST_BINS)
@@ -166,6 +172,31 @@ target-attestation-fuzz-smoke: $(TARGET_ATTESTATION_FUZZ_SMOKE_BIN)
 
 memory-service-fuzz-smoke: $(MEMORY_SERVICE_FUZZ_SMOKE_BIN)
 	./$(MEMORY_SERVICE_FUZZ_SMOKE_BIN)
+
+$(HARDWARE_GATE_TEST_BIN): $(HARDWARE_GATE_SOURCE) \
+		experimental/hardware-gate/tests/test_hardware_gate.c \
+		$(HARDWARE_GATE_HEADER) | $(BUILD_DIR)
+	$(CC) $(HARDWARE_GATE_CPPFLAGS) $(CFLAGS) \
+		$(HARDWARE_GATE_SOURCE) \
+		experimental/hardware-gate/tests/test_hardware_gate.c -o $@
+
+hardware-gate-test: $(HARDWARE_GATE_TEST_BIN)
+	./$(HARDWARE_GATE_TEST_BIN)
+
+$(HARDWARE_GATE_FUZZ_SMOKE_BIN): $(HARDWARE_GATE_SOURCE) \
+		experimental/hardware-gate/fuzz/fuzz_hardware_gate.c \
+		$(HARDWARE_GATE_HEADER) | $(BUILD_DIR)
+	$(CC) $(HARDWARE_GATE_CPPFLAGS) $(CFLAGS) \
+		-DVC_HG_FUZZ_STANDALONE \
+		$(HARDWARE_GATE_SOURCE) \
+		experimental/hardware-gate/fuzz/fuzz_hardware_gate.c -o $@
+
+hardware-gate-fuzz-smoke: $(HARDWARE_GATE_FUZZ_SMOKE_BIN)
+	./$(HARDWARE_GATE_FUZZ_SMOKE_BIN)
+
+hardware-gate-analyze:
+	$(CC) $(HARDWARE_GATE_CPPFLAGS) $(CFLAGS) $(ANALYZER_FLAGS) \
+		-fsyntax-only $(HARDWARE_GATE_SOURCE)
 
 analyze:
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(ANALYZER_FLAGS) -fsyntax-only $(CORE_SOURCES)

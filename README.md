@@ -175,6 +175,14 @@ foreign-process memory is read in this milestone.
 See
 [docs/legacy-psv-compatibility.md](docs/legacy-psv-compatibility.md).
 
+An isolated opt-in
+[`experimental/hardware-gate`](docs/hardware-gate.md) now builds a disposable
+3.65-only SKPRX and source-owned `VCHG00001` VPK. It validates only a
+same-process, main-module-segment, 64-byte VitaSDK copy path. It is not linked
+to the production library or existing self-test, is disabled from normal
+builds, performs no automatic installation, and grants no foreign-title,
+write, injection, hook, pause, search, or network capability.
+
 The first Vita-facing build is the deliberately unprivileged and now
 hardware-tested
 [`VCHT00001` self-test](vita-self-test/README.md). It provides a real on-device
@@ -289,18 +297,26 @@ and
 `build-sanitize/vitacheat_target_attestation_fuzzer -runs=10000 -max_len=640`
 and
 `build-sanitize/vitacheat_memory_service_fuzzer -runs=10000 -max_len=640`.
+The opt-in hardware-gate fuzzer is
+`build-sanitize/experimental/hardware-gate/vitacheat_hardware_gate_fuzzer
+-runs=10000 -max_len=160` when
+`-DVITACHEAT_ENABLE_HARDWARE_GATE=ON`.
 Dependency-free deterministic smoke targets are also available as
 `make launch-service-fuzz-smoke` and
 `make quick-menu-launcher-fuzz-smoke` and
 `make launch-claimant-fuzz-smoke` and
 `make menu-coordinator-fuzz-smoke` and
 `make target-attestation-fuzz-smoke` and
-`make memory-service-fuzz-smoke`. GCC's bounded static-analyzer pass is
+`make memory-service-fuzz-smoke`. The isolated targets are
+`make hardware-gate-test hardware-gate-fuzz-smoke hardware-gate-analyze`.
+GCC's bounded static-analyzer pass is
 available as `make analyze` or with
 `-DVITACHEAT_ENABLE_ANALYZER=ON -DBUILD_TESTING=OFF`.
 
 VitaSDK is not required to build and run the host tests. Building the Vita
-self-test VPK does require VitaSDK.
+self-test VPK or the separately enabled hardware gate does require VitaSDK.
+The exact native build, inspection, manual install/removal, recovery, and
+result-capture protocol is in [docs/hardware-gate.md](docs/hardware-gate.md).
 
 ## Relationship to VitaDebugger
 
@@ -427,8 +443,13 @@ listed only after their own gates pass.
   transaction, lifecycle, and range-query fuzzer.
 - `tests/fuzz/fuzz_memory_service.c` — bounded wire, identity, snapshot,
   callback, quota, time, journal, and lifecycle fuzzer.
+- `experimental/hardware-gate/` — opt-in portable gate model, host
+  tests/fuzzer, VitaSDK SKPRX adapter, generated syscall-stub build, and
+  disposable `VCHG00001` validation client.
 - `vita-self-test/` — ordinary user-mode on-device menu and owned-buffer probe.
 - `docs/architecture.md` — component boundaries and data flow.
+- `docs/hardware-gate.md` — experimental ABI, SDK evidence, build, and manual
+  hardware protocol.
 - `docs/legacy-psv-compatibility.md` — compatibility guarantees and limits.
 - `docs/security-model.md` — authority, transport, database, and cleanup rules.
 - `ROADMAP.md` — staged work from the host core to hardware validation.

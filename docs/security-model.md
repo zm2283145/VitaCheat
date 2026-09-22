@@ -36,6 +36,13 @@ transport, process discovery, write, patch, freeze, scan, hook, or hardware
 implementation. Host tests use synthetic `PCSA00133` module/segment bytes and
 placeholder fingerprint facts, not measured device data.
 
+The isolated `experimental/hardware-gate/` is not that production adapter. It
+is an explicitly enabled, 3.65-only SKPRX/client pair for the source-owned
+`VCHG00001` process. It derives the syscall caller PID, exact-matches title and
+main-module identity, accepts only segment/index/offset reads up to 64 bytes,
+and reads only that same caller process. It cannot identify or read a foreign
+title, and it adds no production capability.
+
 ## Authority model
 
 - Read discovery, snapshot capture, writes, and persistent freezes are separate
@@ -189,10 +196,11 @@ do not by themselves provide the required authoritative foreground, system
 overlay, universal presentation, process/module load generations, measured
 fingerprints, segment catalog, or title-specific gameplay-thread facts.
 SceShell hooks, Vita service syscalls/exports, concrete caller identity
-derivation, native injection, renderer/input/menu hooks, allowlist acquisition,
-the attested read transport/target-memory adapter, measured manifests, and
-cleanup hardware gates remain unavailable; no firmware-offset fallback is
-permitted.
+derivation for production, native injection, renderer/input/menu hooks,
+allowlist acquisition, a strongly attested foreign-target adapter, measured
+manifests, and production cleanup hardware gates remain unavailable; no
+firmware-offset fallback is permitted. The disposable same-process native gate
+does not satisfy any of those requirements.
 
 ## Menu pause rules
 
@@ -248,6 +256,30 @@ permitted.
   offered. Missing required fingerprint facts fail closed.
 - Active writes retain enough original state for bounded cleanup where
   restoration remains valid.
+
+### Disposable native hardware-gate rules
+
+- The compile-time title is exactly `VCHG00001`; kernel code derives caller PID
+  and never accepts an authoritative PID or absolute address from user mode.
+- A kernel-owned single session expires after two seconds. Handles are
+  nonzero, nonrepeating during the module lifetime, invalidated on close,
+  expiry, caller/module mismatch, or stop, and never extend on use.
+- Each operation exact-validates ABI version, struct size, capability bits,
+  reserved-zero fields, handle, module snapshot, segment, permission, and
+  checked range.
+- The only data path is caller request to fixed kernel local, caller-process
+  segment to a zeroed 64-byte kernel bounce, then initialized response to the
+  same caller. Every step requires exact zero-success from VitaSDK safe-copy
+  APIs; every local is scrubbed on exit.
+- Calls are nonblocking and allocation-free. Adapter work occurs outside the
+  transaction guard under reentry exclusion. Stop scrubs an idle session and
+  refuses unload while a syscall is active.
+- There is no user-selectable target, raw address, write, allocator, memory
+  protection, cache, exception, RWX, hook, injection, pause, search, or network
+  operation.
+- The gate must be removed and the Vita rebooted after testing. A pass is only
+  evidence for the source-owned same-process primitive described in
+  `docs/hardware-gate.md`.
 
 The first foreign-process write gate is reserved for the user's offline
 US Ratchet & Clank Collection (`PCSA00133`) version `1.00` test. Its upstream

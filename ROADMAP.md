@@ -84,8 +84,13 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
       process/module/thread generations and measured build fingerprints.
 - [x] Implement and host-test the portable bounded read-only memory service
       against synthetic target memory without adding a native syscall.
-- [ ] Pin, review, and hardware-gate an attested native transport and safe
-      target-read adapter before capturing foreign-process bytes.
+- [x] Pin and compile/link an isolated experimental native transport that
+      derives its caller PID and reads only the source-owned test process
+      through a 64-byte `ksceKernelCopyFromUserProc` bounce.
+- [ ] Run and retain the `VCHG00001` same-process native gate on owned 3.65
+      hardware; passing it still does not authorize foreign-process access.
+- [ ] Design, review, and hardware-gate strong foreign-process attestation and
+      a production target-read adapter before capturing any foreign bytes.
 - [x] Reconcile trusted catalog addresses into verified module/segment-relative
       symbolic offsets without dereferencing them.
 - [x] Add portable lifecycle tests for app exit, relaunch, PID reuse,
