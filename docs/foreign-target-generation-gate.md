@@ -38,14 +38,32 @@ controller run ID was `000000000b961066`; the replacement was
 test flow before open/read because its run identity changed. No foreign read,
 second input, or in-transaction retry occurred, and restoration was exact.
 
-The current correction keeps the kernel ABI and create-bound registry
-unchanged but makes the controller restart-aware. Three controller processes
+The first restart-aware hardware run reached a complete 8/8 current phase-1
+result for transaction `0000000009502c29`, a valid wait-generation-1
+checkpoint, and exact stage-6 `0/-12/0/0` target evidence. The immutable
+phase-1 result nevertheless remained zero bytes for 75 seconds. Source and
+raw evidence agree on the cause: the controller wrote the current result,
+called `sceAppMgrLaunchAppByUri`, and was replaced or suspended before its
+second write to the immutable phase path. No X input, phase-2 process, open,
+foreign read, or later phase occurred. Restoration was exact. The sealed
+evidence manifest SHA-256 is
+`5f47a7076eb74c1988b06267add53ebe3a6c7ef250195491ec362331c8e0a507`;
+the final handoff SHA-256 is
+`297a131a799fe20e1f8afac6e2e7d27a9ec398de89a319a0e8aaf0aba03d6ea7`.
+
+The current correction keeps the kernel ABI, create-bound registry, and
+restart-aware three-process split unchanged. Three controller processes
 execute tests 1-8, 9-28, and 29-35 respectively. A fixed 96-byte
 integrity-checked checkpoint carries only orchestration phase, non-sensitive
 counter snapshots, run lineage, restart count, and the opaque old handle. It
 contains no PID, address, generation, revision, module UID, fingerprint, or
 segment data and grants no authority. Every restarted process independently
-uses kernel status/open/read validation. This restart-aware revision is
+uses kernel status/open/read validation. Result schema v5 now commits the
+wait-state checkpoint and complete immutable phase result with explicit
+`launch_committed=true` before either controller-to-target foreground launch.
+Every write is synced, closed, reread to exact length/fingerprint, and only
+then may AppMgr run. Correctness no longer depends on a single statement
+executing after a successful foreground launch return. This correction is
 host-tested and Vita cross-compiled but has not yet been run on hardware.
 
 The layer is based exactly on remote `native-read-hardware-gate` commit
@@ -157,13 +175,24 @@ reserved-field, skipped-phase, counter-rollback, or structurally invalid
 checkpoint is rejected without truncation or launch.
 
 Phase 1 records the initial run ID and pre-target safe counter baseline. Before
-each AppMgr transition the checkpoint is durably marked launch-pending; only
-after the launch returns successfully and the phase result is written is it
-committed to the corresponding wait state. On phase-2/phase-3 entry, the next
+each AppMgr transition the checkpoint is durably marked launch-pending, then
+advanced to and reread as the corresponding wait state. The controller next
+records `commit-target-launch` or `commit-target-relaunch`, writes the immutable
+phase result before the current-result alias, syncs and closes each descriptor,
+and rereads each file to its exact emitted length and fingerprint. Only after
+all of that succeeds does it call AppMgr. No post-launch statement, result
+write, checkpoint transition, or diagnostic is required: replacement at the
+launch-return boundary is a valid execution. On phase-2/phase-3 entry, the next
 distinct run ID durably consumes that wait state into a running state before
 any result truncation or gate operation. Launch-pending and running checkpoints
 are structurally integrity-valid but non-resumable: a later process preserves
 and rejects them, preventing retry of an incomplete phase.
+
+If persistence fails before AppMgr, or AppMgr returns an error, the controller
+attempts to restore the non-resumable launch-pending checkpoint and records a
+failed launch-commit test. It never retries the launch. The launch-commit field
+is host orchestration evidence only: it cannot grant kernel lifecycle, session,
+open, read, or input authority.
 
 Phase 2 requires exactly one target-create match/authorization and either zero
 target start callbacks/revalidations (the observed hardware profile) or at
@@ -177,9 +206,10 @@ persisting its numeric value cannot reactivate it.
 
 Each controller process truncates and verifies the current
 `ux0:data/vitacheat-foreign-target-result.json` plus its own immutable phase
-path before publishing schema `vitacheat.foreign-target-gate.result.v4`, build
-ID `VCFG-RESULT-V4`, a nonzero run ID, transaction ID, previous run ID, phase
-index/count, canonical test offset, and `result_cleared=true`. Phase paths are:
+path before publishing schema `vitacheat.foreign-target-gate.result.v5`, build
+ID `VCFG-RESULT-V5`, a nonzero run ID, transaction ID, previous run ID, phase
+index/count, canonical test offset/count, `result_cleared=true`, and the
+phase-specific launch-commit value. Phase paths are:
 
 - `ux0:data/vitacheat-foreign-target-result-phase-1.json` for tests 1-8;
 - `ux0:data/vitacheat-foreign-target-result-phase-2.json` for tests 9-28;
@@ -188,9 +218,11 @@ index/count, canonical test offset, and `result_cleared=true`. Phase paths are:
 The three documents must share one transaction ID, form an exact distinct
 run-ID chain, report phase indexes 1/2/3 and test offsets 0/8/28, contain
 8/20/7 ordered tests, and each report `phase_complete=true`. Concatenating
-their tests must exactly equal the canonical 35-test list. Preserved prior
-bytes and partial rewrites are waiting evidence, never authority. A complete
-identity mismatch or malformed document fails closed.
+their tests must exactly equal the canonical 35-test list. Phases 1 and 2 must
+report `launch_committed=true`; phase 3 must report false. Preserved prior,
+zero-byte, and partial rewrites are bounded waiting evidence, never authority.
+A complete identity mismatch or malformed document fails closed. The host must
+never wait for a post-launch controller write.
 
 ## Documented API audit
 
@@ -215,6 +247,7 @@ fails closed.
 | caller PID / monotonic time | `arm-vita-eabi/include/psp2kern/kernel/threadmgr/misc.h`; `db/360/SceKernelThreadMgr.yml` | `SceThreadmgrForDriver` `0xE2C40624`; PID `0x9DCB4B7A`; time `0xF4EE4FA9` |
 | firmware check | `arm-vita-eabi/include/psp2kern/kernel/modulemgr.h`; `db/360/SceKernelModulemgr.yml` | `SceModulemgrForDriver` `0xD4A60A52`; `ksceKernelGetSystemSwVersion` `0x5182E212` |
 | source-owned app transition | `arm-vita-eabi/include/psp2/appmgr.h`; `db/360/SceDriverUser.yml` | `SceAppMgrUser` `0xA6605D6F`; launch `0x003C634F`; destroy `0x4570DC15` |
+| durable user-file sync | `arm-vita-eabi/include/psp2/io/fcntl.h`; `db/360/SceIofilemgr.yml` | `SceIofilemgr` `0xF2FF276E`; `sceIoSyncByFd` `0x16512F59` |
 
 Installed header/database SHA-256 values:
 
@@ -227,11 +260,13 @@ Installed header/database SHA-256 values:
 | `arm-vita-eabi/include/psp2kern/kernel/threadmgr/misc.h` | `3af5f061752252ef068afafe655f8c59400ef5558c3779a8b282b7548f112f44` |
 | `arm-vita-eabi/include/psp2kern/kernel/sysmem/data_transfers.h` | `5d475f58214318c36feb851b9e973178c761521f8646d33c5ae9963e31055093` |
 | `arm-vita-eabi/include/psp2/appmgr.h` | `84b4603423eff82844bfe19561c3f1cc4418623850381d8f5628eb10ee845d00` |
+| `arm-vita-eabi/include/psp2/io/fcntl.h` | `11a0e01fb3573fae04e4338760662ad3e415c83ae6cedd866ecd5e16dd51832f` |
 | `share/vita-headers/db/360/SceSysmem.yml` | `0b69b8d22692bd8af370026b9278e9cf93a8eeb26910b2fe095a1c47022b2258` |
 | `share/vita-headers/db/360/SceKernelThreadMgr.yml` | `2b8864ef8b8718bd051f4fc3da4cf42b0a14187ec6c1ef0f4a66c8dcf7d1eb76` |
 | `share/vita-headers/db/360/SceKernelModulemgr.yml` | `3bbd6976d0f3d48fc29cf4c2ba87100fed9ea59178f81a478243b732f7272ac6` |
 | `share/vita-headers/db/360/SceDriverUser.yml` | `2607941f3aa1d770cf92677f41f8cd845a825fc24f17c7552fcd38f72e114621` |
 | `share/vita-headers/db/363/SceKernelModulemgr.yml` | `173127745d50817950beea139591547fcc5341e253b791632706c211653c9ac1` |
+| `share/vita-headers/db/360/SceIofilemgr.yml` | `e330f21c3c3cf18bf2d407be63a172ae228714fe1571078f01588ebe09cdff40` |
 
 Exact linked archive SHA-256 values:
 
@@ -367,7 +402,11 @@ version-1 compatibility, delayed `-13/-13/-12` readiness, permanent
 unavailability, delayed-wake deadline overshoot, unexpected results, handle
 leaks, clock rollback, stale prelaunch cleanup, prompt timeout without input,
 diagnostic non-authority, controller-result stale/partial/atomic freshness,
-and unchanged target wrong-caller rejection. The bounded fuzzer mutates event
+prelaunch checkpoint rollback, immediate suspension at launch return,
+replacement before any post-launch statement, exact three-phase lineage,
+duplicate/replayed controller evidence, and denial of input before fresh
+prompt evidence. Existing lifecycle counter, foreign-read, stale-handle, and
+wrong-caller coverage remains unchanged. The bounded fuzzer mutates event
 sequences, PIDs, modules, time, copy behavior, requests, concurrent exits, raw
 startup records, and result-freshness observations, then round-trips every
 valid diagnostic record.
@@ -389,8 +428,12 @@ ctest --test-dir build-foreign-gate --output-on-failure
 ```
 
 The final validation used strict GCC 16.2.0, Clang 22.1.8, and MSVC
-19.51.36256.0 builds with warnings as errors; the opt-in suites passed on all
-three compilers and the gate-disabled default suite remained unchanged. The
+19.51.36256.0 builds with warnings as errors. The full GCC and Clang matrices
+passed, both changed foreign-target suites passed under MSVC `/W4 /WX`, and
+the GCC gate-disabled default suite passed 12/12. The full MSVC CTest run had
+one unrelated runtime failure in the unchanged memory-service status-length
+test; the other 14 tests passed, including both foreign-target suites, and
+that memory-service suite passed in the GCC, Clang, and default matrices. The
 deterministic standalone fuzzer completed 10,000 inputs and GCC `-fanalyzer`
 reported no findings. On this Windows host, the Clang sanitizer configuration
 still cannot link because the installed toolchain lacks
@@ -429,12 +472,12 @@ The final clean cross-build inventory is:
 |---|---:|---|
 | `vitacheat-foreign-target-gate.skprx` | 11,853 | `bf4b08fd16ef6a6c249958fba094bef8eb83844035895619e82e4b4b8c6eba7f` |
 | `vitacheat-foreign-target-fixture.vpk` | 7,643 | `b4e64cdaeb25f1c3c9df1d6da7acb2505e9a29ccd368b527f3af2e3258459a16` |
-| `vitacheat-foreign-target-controller.vpk` | 12,273 | `fc7e4b25c077d24a36ac568e5ee3ed71a3d2407ab7dc1013b426927333ee727f` |
+| `vitacheat-foreign-target-controller.vpk` | 12,891 | `8c03d66c808c6dd5d93e170d73bcb5eca6d0369ffaf1ca9fdd0935090ea68447` |
 | `libVitaCheatForeignGate_stub.a` | 3,728 | `63199aafac1662bd6724d6ae1140db3768a822606bf68b157a80c7b0cff6df10` |
 | Target `eboot.bin` | 10,659 | `404b482bb49ea2a086c1e59c5b7ac3d7ba42ea83d22784ee268035541cebfc87` |
-| Controller `eboot.bin` | 15,288 | `2d89501bc5dbb892f3906d6d2f2b7999bd441db772ba2c96784a297dc7eedb70` |
-| `symbol-inventory.txt` | 1,878 | `def041da241f14e50770b0c3aa2361be05e1a3696f6a30720dc0b7ebd089ffb4` |
-| `artifact-inventory.txt` | 430 | `8021ea65ca8d3e93f76410c39ca123d0149278d76a613b6da874fbf21ab77259` |
+| Controller `eboot.bin` | 15,898 | `6f94e094f8469dfb01cf0f2a6d5be18d10c0472f7b123556d8c8ee3f95298f8d` |
+| `symbol-inventory.txt` | 1,893 | `c63933bd04ce40f4eac770f911c091c74d867e454c244173a80594d078be2a01` |
+| `artifact-inventory.txt` | 430 | `26794a43885aa9df82c1dc1ba1182e3544bf363ed18c4a4d9e86ac8aa53e26a4` |
 
 Each VPK contains only `sce_sys/param.sfo` and `eboot.bin`, both stamped
 `1980-01-01T00:00:00`. The target SFO is 912 bytes with SHA-256
@@ -458,8 +501,9 @@ Version 2 adds documented `sceKernelGetSystemTimeWide` to both client
 allowlists for the bounded target deadline and non-authoritative controller
 run identity; the 11 kernel imports and four exports are unchanged.
 The create-bound lifecycle/status-v2 correction adds no kernel import, export,
-or stub member. The restart checkpoint adds only documented `sceClibMemcpy`
-to the controller allowlist; kernel imports, target symbols, exports, and four
+or stub member. The restart checkpoint adds documented `sceClibMemcpy`; the
+prelaunch persistence correction adds documented `sceIoSyncByFd` to the
+controller allowlist. Kernel imports, target symbols, exports, and four
 generated stub members remain unchanged.
 The linked Vita startup runtime imports allocator primitives even though the
 gate, target, and controller source performs no dynamic allocation.
@@ -484,10 +528,17 @@ transfer.
    Do not hot-load the module; the event registry must predate both fixtures.
 3. Install the fixture and controller VPKs. Verify the bubbles are exactly
    `VCFT00001` and `VCFC00001`.
+   Host recovery, if separately necessary, requires an exact live
+   `vitacompanion 1.07` version reply and its documented
+   `quit <title-id|all>` command. The legacy Companion termination command
+   must never be sent. Normal gate progression uses the source-owned AppMgr
+   paths, not host termination.
 4. Preserve all old controller/phase results and checkpoint bytes, then launch
    the controller first. With no active checkpoint, it must prove kernel
    `READY`/`TARGET_NONE`, clear the result and phase paths, create the phase-1
-   checkpoint, report tests 1-8 at offset 0, and launch the first target.
+   checkpoint, durably commit the wait state and complete schema-v5 phase-1
+   artifact with tests 1-8 at offset 0 and `launch_committed=true`, then launch
+   the first target. Never wait for a post-launch controller write.
 5. Poll the startup path read-only. Preserve distinct partial/invalid bytes and
    send no input while the path is empty, malformed, or below stage 6. Require
    one complete version-2 stage-6 record with the exact identity, integrity,
@@ -505,13 +556,14 @@ transfer.
    event-registered target, performs exact 1/63/64-byte reads and bounded
    rejection tests, destroys only `VCFT00001`, requires the exact exit
    diagnostic, verifies the live handle is stale, clears all three target
-   evidence paths, advances the checkpoint, and launches generation 2.
+   evidence paths, durably commits the wait state and complete schema-v5
+   phase-2 artifact, and only then launches generation 2.
 7. Repeat the exact stage-6/layout/fixture validation and one bounded X in the
    relaunched fixture. The target starts controller phase 3 with a third
    distinct run ID. Require tests 29-35 at offset 28, the exact second
    generation counter profile, rejection of the persisted old handle, a
    distinct new handle, one exact 64-byte read, close, and a verified zero-byte
-   completed checkpoint.
+   completed checkpoint. Phase 3 must report `launch_committed=false`.
 8. Concatenate the three phase test arrays and require the canonical 35 names
    in exact order. Retrieve
    `ux0:data/vitacheat-foreign-target-result.json`,
@@ -547,6 +599,7 @@ The second-run diagnostic stop matrix is strict:
 | checkpoint is nonzero and wrong-sized, corrupt, same-run, skipped-phase, or has invalid counters/reserved fields | restart orchestration cannot be trusted | preserve it; no launch, input, truncation, or retry |
 | controller lacks exactly one create authorization, has 1-18 successful target revalidations, or reports saturation/failure | callback reachability/classification or exact identity contradicted both accepted evidence profiles | preserve diagnostics; no retry |
 | phase result lacks its exact transaction/run chain, index, offset, count, or `phase_complete=true` | controller replacement did not complete the required transition | preserve all phase/current/checkpoint bytes; no retry |
+| phase 1/2 lacks `launch_committed=true`, phase 3 does not report false, or a required phase artifact remains zero/partial through its bounded deadline | prelaunch durable handoff is absent or inconsistent | no input; preserve phase/current/checkpoint bytes; no retry |
 | stage 7 persists | X was observed but the next controller process did not publish a complete phase result | never repeat input; stop at timeout |
 | stage 8 | controller launch returned with the recorded code | rely only on the next controller process's independent kernel status |
 

@@ -768,6 +768,16 @@ static void test_controller_checkpoint_round_trip(void)
           VC_FTG_CONTROLLER_PHASE_WAIT_GENERATION_1);
     CHECK(vc_ftg_controller_checkpoint_encode(
         &checkpoint, encoded));
+    CHECK(vc_ftg_controller_checkpoint_cancel_launch(
+        &checkpoint));
+    CHECK(checkpoint.phase ==
+          VC_FTG_CONTROLLER_PHASE_LAUNCH_GENERATION_1);
+    CHECK(vc_ftg_controller_checkpoint_encode(
+        &checkpoint, encoded));
+    CHECK(vc_ftg_controller_checkpoint_commit_launch(
+        &checkpoint));
+    CHECK(vc_ftg_controller_checkpoint_encode(
+        &checkpoint, encoded));
     CHECK(!vc_ftg_controller_checkpoint_begin_resume(
         &checkpoint, UINT64_C(0x100)));
     CHECK(vc_ftg_controller_checkpoint_begin_resume(
@@ -807,6 +817,16 @@ static void test_controller_checkpoint_round_trip(void)
         &checkpoint));
     CHECK(vc_ftg_controller_checkpoint_encode(
         &checkpoint, encoded));
+    CHECK(vc_ftg_controller_checkpoint_cancel_launch(
+        &checkpoint));
+    CHECK(checkpoint.phase ==
+          VC_FTG_CONTROLLER_PHASE_LAUNCH_GENERATION_2);
+    CHECK(vc_ftg_controller_checkpoint_encode(
+        &checkpoint, encoded));
+    CHECK(vc_ftg_controller_checkpoint_commit_launch(
+        &checkpoint));
+    CHECK(vc_ftg_controller_checkpoint_encode(
+        &checkpoint, encoded));
     CHECK(vc_ftg_controller_checkpoint_decode(
         encoded, sizeof(encoded), &decoded));
     CHECK(decoded.phase ==
@@ -840,6 +860,194 @@ static void test_controller_checkpoint_round_trip(void)
     CHECK(!vc_ftg_controller_checkpoint_validate(&decoded));
 }
 
+static vc_ftg_controller_phase_evidence controller_phase(
+    uint32_t phase,
+    uint64_t run_id,
+    uint64_t transaction_id,
+    uint64_t previous_run_id)
+{
+    vc_ftg_controller_phase_evidence evidence;
+
+    memset(&evidence, 0, sizeof(evidence));
+    evidence.run_id = run_id;
+    evidence.transaction_id = transaction_id;
+    evidence.previous_run_id = previous_run_id;
+    evidence.phase_index = phase;
+    evidence.result_cleared = true;
+    evidence.phase_complete = true;
+    evidence.launch_committed = phase != 3u;
+    if (phase == 1u) {
+        evidence.test_offset =
+            VC_FTG_CONTROLLER_PHASE_1_TEST_OFFSET;
+        evidence.test_count =
+            VC_FTG_CONTROLLER_PHASE_1_TEST_COUNT;
+    } else if (phase == 2u) {
+        evidence.test_offset =
+            VC_FTG_CONTROLLER_PHASE_2_TEST_OFFSET;
+        evidence.test_count =
+            VC_FTG_CONTROLLER_PHASE_2_TEST_COUNT;
+    } else {
+        evidence.test_offset =
+            VC_FTG_CONTROLLER_PHASE_3_TEST_OFFSET;
+        evidence.test_count =
+            VC_FTG_CONTROLLER_PHASE_3_TEST_COUNT;
+    }
+    return evidence;
+}
+
+static void test_controller_host_phase_chain(void)
+{
+    vc_ftg_controller_host_state state;
+    vc_ftg_controller_phase_evidence phase_1 =
+        controller_phase(
+            1u,
+            UINT64_C(0x100),
+            UINT64_C(0x100),
+            0u);
+    vc_ftg_controller_phase_evidence phase_2 =
+        controller_phase(
+            2u,
+            UINT64_C(0x101),
+            UINT64_C(0x100),
+            UINT64_C(0x100));
+    vc_ftg_controller_phase_evidence phase_3 =
+        controller_phase(
+            3u,
+            UINT64_C(0x102),
+            UINT64_C(0x100),
+            UINT64_C(0x101));
+
+    CHECK(strcmp(
+              VC_FTG_CONTROLLER_RESULT_SCHEMA,
+              "vitacheat.foreign-target-gate.result.v5") == 0);
+    CHECK(strcmp(
+              VC_FTG_CONTROLLER_RESULT_BUILD_ID,
+              "VCFG-RESULT-V5") == 0);
+    vc_ftg_controller_host_init(&state);
+    CHECK(!vc_ftg_controller_host_can_send_input(
+        &state, 1u, true));
+    CHECK(vc_ftg_controller_host_accept_phase(
+        &state, &phase_1));
+    CHECK(state.step ==
+          VC_FTG_CONTROLLER_HOST_EXPECT_PROMPT_1);
+    CHECK(!vc_ftg_controller_host_can_send_input(
+        &state, 1u, false));
+    CHECK(vc_ftg_controller_host_can_send_input(
+        &state, 1u, true));
+    CHECK(vc_ftg_controller_host_commit_input(
+        &state, 1u, true));
+    CHECK(!vc_ftg_controller_host_commit_input(
+        &state, 1u, true));
+    CHECK(vc_ftg_controller_host_accept_phase(
+        &state, &phase_2));
+    CHECK(vc_ftg_controller_host_can_send_input(
+        &state, 2u, true));
+    CHECK(vc_ftg_controller_host_commit_input(
+        &state, 2u, true));
+    CHECK(vc_ftg_controller_host_accept_phase(
+        &state, &phase_3));
+    CHECK(vc_ftg_controller_host_complete(&state));
+    CHECK(state.input_count == 2u);
+    CHECK(!vc_ftg_controller_host_accept_phase(
+        &state, &phase_3));
+    CHECK(state.step == VC_FTG_CONTROLLER_HOST_FAILED);
+}
+
+static void test_controller_host_rejects_replay(void)
+{
+    vc_ftg_controller_host_state state;
+    vc_ftg_controller_phase_evidence evidence;
+
+    vc_ftg_controller_host_init(&state);
+    evidence = controller_phase(
+        1u,
+        UINT64_C(0x100),
+        UINT64_C(0x100),
+        0u);
+    evidence.phase_complete = false;
+    CHECK(!vc_ftg_controller_host_accept_phase(
+        &state, &evidence));
+    CHECK(state.step == VC_FTG_CONTROLLER_HOST_FAILED);
+
+    vc_ftg_controller_host_init(&state);
+    evidence = controller_phase(
+        1u,
+        UINT64_C(0x100),
+        UINT64_C(0x100),
+        0u);
+    evidence.launch_committed = false;
+    CHECK(!vc_ftg_controller_host_accept_phase(
+        &state, &evidence));
+
+    vc_ftg_controller_host_init(&state);
+    evidence = controller_phase(
+        2u,
+        UINT64_C(0x101),
+        UINT64_C(0x100),
+        UINT64_C(0x100));
+    CHECK(!vc_ftg_controller_host_accept_phase(
+        &state, &evidence));
+
+    vc_ftg_controller_host_init(&state);
+    evidence = controller_phase(
+        1u,
+        UINT64_C(0x100),
+        UINT64_C(0x100),
+        0u);
+    CHECK(vc_ftg_controller_host_accept_phase(
+        &state, &evidence));
+    CHECK(vc_ftg_controller_host_commit_input(
+        &state, 1u, true));
+    evidence = controller_phase(
+        2u,
+        UINT64_C(0x101),
+        UINT64_C(0x100),
+        UINT64_C(0x099));
+    CHECK(!vc_ftg_controller_host_accept_phase(
+        &state, &evidence));
+
+    vc_ftg_controller_host_init(&state);
+    evidence = controller_phase(
+        1u,
+        UINT64_C(0x100),
+        UINT64_C(0x100),
+        0u);
+    CHECK(vc_ftg_controller_host_accept_phase(
+        &state, &evidence));
+    CHECK(!vc_ftg_controller_host_accept_phase(
+        &state, &evidence));
+}
+
+static void test_controller_prelaunch_order(void)
+{
+    vc_ftg_controller_launch_guard guard;
+
+    vc_ftg_controller_launch_guard_init(&guard);
+    CHECK(!vc_ftg_controller_launch_guard_ready(&guard));
+    CHECK(vc_ftg_controller_launch_guard_checkpoint_verified(
+        &guard));
+    CHECK(!vc_ftg_controller_launch_guard_ready(&guard));
+    CHECK(vc_ftg_controller_launch_guard_results_verified(
+        &guard));
+    CHECK(vc_ftg_controller_launch_guard_ready(&guard));
+
+    /*
+     * A foreground launch may replace the controller immediately. The
+     * already-ready guard needs no post-launch transition.
+     */
+    CHECK(vc_ftg_controller_launch_guard_ready(&guard));
+    CHECK(!vc_ftg_controller_launch_guard_results_verified(
+        &guard));
+    CHECK(!vc_ftg_controller_launch_guard_ready(&guard));
+
+    vc_ftg_controller_launch_guard_init(&guard);
+    CHECK(!vc_ftg_controller_launch_guard_results_verified(
+        &guard));
+    CHECK(guard.step == VC_FTG_CONTROLLER_LAUNCH_FAILED);
+    CHECK(!vc_ftg_controller_launch_guard_checkpoint_verified(
+        &guard));
+}
+
 int main(void)
 {
     test_ordering_and_round_trip();
@@ -858,6 +1066,9 @@ int main(void)
     test_stage_names();
     test_controller_generation_profiles();
     test_controller_checkpoint_round_trip();
+    test_controller_host_phase_chain();
+    test_controller_host_rejects_replay();
+    test_controller_prelaunch_order();
 
     if (failures != 0) {
         fprintf(

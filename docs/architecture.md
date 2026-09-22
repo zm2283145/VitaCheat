@@ -443,8 +443,9 @@ capability mask; unknown operations and bits fail closed. The ordinary Vita
 self-test remains buffer-only. The same-process and foreign-target gates use
 separate disposable namespaces. The former has a passing 3.65 record. The
 latter has hardware evidence for create-bound authorization and process
-replacement but no foreign-read pass; its restart-aware revision is
-host/cross-build validated. Retail-title access, kernel hooks, user-plugin
+replacement but no foreign-read pass. A restart-aware run exposed a prelaunch
+phase-result ordering failure before input; the corrected schema-v5 durable
+prelaunch revision is host/cross-build validated. Retail-title access, kernel hooks, user-plugin
 injection, and overlay rendering remain later milestones with their own threat
 models and evidence.
 

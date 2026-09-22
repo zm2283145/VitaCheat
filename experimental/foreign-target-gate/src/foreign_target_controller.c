@@ -313,6 +313,27 @@ bool vc_ftg_controller_checkpoint_commit_launch(
     return controller_checkpoint_fields_valid(checkpoint);
 }
 
+bool vc_ftg_controller_checkpoint_cancel_launch(
+    vc_ftg_controller_checkpoint *checkpoint)
+{
+    if (!vc_ftg_controller_checkpoint_validate(checkpoint)) {
+        return false;
+    }
+    if (checkpoint->phase ==
+        VC_FTG_CONTROLLER_PHASE_WAIT_GENERATION_1) {
+        checkpoint->phase =
+            VC_FTG_CONTROLLER_PHASE_LAUNCH_GENERATION_1;
+    } else if (checkpoint->phase ==
+               VC_FTG_CONTROLLER_PHASE_WAIT_GENERATION_2) {
+        checkpoint->phase =
+            VC_FTG_CONTROLLER_PHASE_LAUNCH_GENERATION_2;
+    } else {
+        return false;
+    }
+    checkpoint->integrity = 0u;
+    return controller_checkpoint_fields_valid(checkpoint);
+}
+
 bool vc_ftg_controller_checkpoint_begin_resume(
     vc_ftg_controller_checkpoint *checkpoint,
     uint64_t controller_run_id)
@@ -447,4 +468,185 @@ bool vc_ftg_controller_checkpoint_validate(
            sizeof(encoded_checkpoint));
     memset(encoded, 0, sizeof(encoded));
     return valid;
+}
+
+void vc_ftg_controller_host_init(
+    vc_ftg_controller_host_state *state)
+{
+    if (state != NULL) {
+        memset(state, 0, sizeof(*state));
+        state->step =
+            VC_FTG_CONTROLLER_HOST_EXPECT_PHASE_1;
+    }
+}
+
+static bool controller_host_fail(
+    vc_ftg_controller_host_state *state)
+{
+    if (state != NULL) {
+        state->step = VC_FTG_CONTROLLER_HOST_FAILED;
+    }
+    return false;
+}
+
+bool vc_ftg_controller_host_accept_phase(
+    vc_ftg_controller_host_state *state,
+    const vc_ftg_controller_phase_evidence *evidence)
+{
+    if (state == NULL ||
+        evidence == NULL ||
+        evidence->run_id == 0u ||
+        !evidence->result_cleared ||
+        !evidence->phase_complete) {
+        return controller_host_fail(state);
+    }
+    switch (state->step) {
+    case VC_FTG_CONTROLLER_HOST_EXPECT_PHASE_1:
+        if (evidence->transaction_id !=
+                evidence->run_id ||
+            evidence->previous_run_id != 0u ||
+            evidence->phase_index != 1u ||
+            evidence->test_offset !=
+                VC_FTG_CONTROLLER_PHASE_1_TEST_OFFSET ||
+            evidence->test_count !=
+                VC_FTG_CONTROLLER_PHASE_1_TEST_COUNT ||
+            !evidence->launch_committed) {
+            return controller_host_fail(state);
+        }
+        state->transaction_id = evidence->transaction_id;
+        state->previous_run_id = evidence->run_id;
+        state->step =
+            VC_FTG_CONTROLLER_HOST_EXPECT_PROMPT_1;
+        return true;
+    case VC_FTG_CONTROLLER_HOST_EXPECT_PHASE_2:
+        if (evidence->transaction_id !=
+                state->transaction_id ||
+            evidence->run_id == state->transaction_id ||
+            evidence->run_id == state->previous_run_id ||
+            evidence->previous_run_id !=
+                state->previous_run_id ||
+            evidence->phase_index != 2u ||
+            evidence->test_offset !=
+                VC_FTG_CONTROLLER_PHASE_2_TEST_OFFSET ||
+            evidence->test_count !=
+                VC_FTG_CONTROLLER_PHASE_2_TEST_COUNT ||
+            !evidence->launch_committed) {
+            return controller_host_fail(state);
+        }
+        state->previous_run_id = evidence->run_id;
+        state->step =
+            VC_FTG_CONTROLLER_HOST_EXPECT_PROMPT_2;
+        return true;
+    case VC_FTG_CONTROLLER_HOST_EXPECT_PHASE_3:
+        if (evidence->transaction_id !=
+                state->transaction_id ||
+            evidence->run_id == state->transaction_id ||
+            evidence->run_id == state->previous_run_id ||
+            evidence->previous_run_id !=
+                state->previous_run_id ||
+            evidence->phase_index != 3u ||
+            evidence->test_offset !=
+                VC_FTG_CONTROLLER_PHASE_3_TEST_OFFSET ||
+            evidence->test_count !=
+                VC_FTG_CONTROLLER_PHASE_3_TEST_COUNT ||
+            evidence->launch_committed) {
+            return controller_host_fail(state);
+        }
+        state->previous_run_id = evidence->run_id;
+        state->step = VC_FTG_CONTROLLER_HOST_COMPLETE;
+        return true;
+    default:
+        return controller_host_fail(state);
+    }
+}
+
+bool vc_ftg_controller_host_can_send_input(
+    const vc_ftg_controller_host_state *state,
+    uint32_t generation,
+    bool fresh_prompt_complete)
+{
+    if (state == NULL || !fresh_prompt_complete) {
+        return false;
+    }
+    return (generation == 1u &&
+            state->step ==
+                VC_FTG_CONTROLLER_HOST_EXPECT_PROMPT_1) ||
+           (generation == 2u &&
+            state->step ==
+                VC_FTG_CONTROLLER_HOST_EXPECT_PROMPT_2);
+}
+
+bool vc_ftg_controller_host_commit_input(
+    vc_ftg_controller_host_state *state,
+    uint32_t generation,
+    bool fresh_prompt_complete)
+{
+    if (!vc_ftg_controller_host_can_send_input(
+            state, generation, fresh_prompt_complete)) {
+        return false;
+    }
+    ++state->input_count;
+    state->step = generation == 1u
+                      ? VC_FTG_CONTROLLER_HOST_EXPECT_PHASE_2
+                      : VC_FTG_CONTROLLER_HOST_EXPECT_PHASE_3;
+    return true;
+}
+
+bool vc_ftg_controller_host_complete(
+    const vc_ftg_controller_host_state *state)
+{
+    return state != NULL &&
+           state->step == VC_FTG_CONTROLLER_HOST_COMPLETE &&
+           state->input_count == 2u;
+}
+
+void vc_ftg_controller_launch_guard_init(
+    vc_ftg_controller_launch_guard *guard)
+{
+    if (guard != NULL) {
+        guard->step = VC_FTG_CONTROLLER_LAUNCH_PREPARING;
+    }
+}
+
+static bool controller_launch_guard_fail(
+    vc_ftg_controller_launch_guard *guard)
+{
+    if (guard != NULL) {
+        guard->step = VC_FTG_CONTROLLER_LAUNCH_FAILED;
+    }
+    return false;
+}
+
+bool vc_ftg_controller_launch_guard_checkpoint_verified(
+    vc_ftg_controller_launch_guard *guard)
+{
+    if (guard == NULL ||
+        guard->step !=
+            VC_FTG_CONTROLLER_LAUNCH_PREPARING) {
+        return controller_launch_guard_fail(guard);
+    }
+    guard->step =
+        VC_FTG_CONTROLLER_LAUNCH_CHECKPOINT_VERIFIED;
+    return true;
+}
+
+bool vc_ftg_controller_launch_guard_results_verified(
+    vc_ftg_controller_launch_guard *guard)
+{
+    if (guard == NULL ||
+        guard->step !=
+            VC_FTG_CONTROLLER_LAUNCH_CHECKPOINT_VERIFIED) {
+        return controller_launch_guard_fail(guard);
+    }
+    guard->step =
+        VC_FTG_CONTROLLER_LAUNCH_RESULTS_VERIFIED;
+    return true;
+}
+
+bool vc_ftg_controller_launch_guard_ready(
+    const vc_ftg_controller_launch_guard *guard)
+{
+    return guard != NULL &&
+           guard->step ==
+               VC_FTG_CONTROLLER_LAUNCH_RESULTS_VERIFIED;
 }

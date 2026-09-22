@@ -64,7 +64,16 @@ typedef struct controller_state {
     uint32_t test_offset;
     uint32_t expected_test_count;
     bool result_cleared;
+    bool launch_committed;
+    bool persistence_failed;
 } controller_state;
+
+typedef struct result_writer {
+    SceUID fd;
+    size_t size;
+    uint32_t fingerprint;
+    bool valid;
+} result_writer;
 
 static bool write_all(
     SceUID fd,
@@ -86,22 +95,102 @@ static bool write_all(
     return true;
 }
 
-static void write_results_path(
+static uint32_t result_fingerprint_update(
+    uint32_t fingerprint,
+    const uint8_t *bytes,
+    size_t size)
+{
+    size_t index;
+
+    for (index = 0u; index < size; ++index) {
+        fingerprint ^= bytes[index];
+        fingerprint *= UINT32_C(16777619);
+    }
+    return fingerprint;
+}
+
+static void result_writer_write(
+    result_writer *writer,
+    const void *buffer,
+    size_t size)
+{
+    if (writer == NULL || !writer->valid) {
+        return;
+    }
+    if (!write_all(writer->fd, buffer, size)) {
+        writer->valid = false;
+        return;
+    }
+    writer->fingerprint = result_fingerprint_update(
+        writer->fingerprint,
+        (const uint8_t *)buffer,
+        size);
+    writer->size += size;
+}
+
+static bool verify_result_file(
+    const char *path,
+    size_t expected_size,
+    uint32_t expected_fingerprint)
+{
+    uint8_t buffer[256];
+    size_t observed_size = 0u;
+    uint32_t observed_fingerprint = UINT32_C(2166136261);
+    SceUID fd;
+    bool valid = false;
+
+    fd = sceIoOpen(path, SCE_O_RDONLY, 0);
+    if (fd < 0) {
+        return false;
+    }
+    for (;;) {
+        const SceSSize read_size = sceIoRead(
+            fd, buffer, sizeof(buffer));
+
+        if (read_size < 0) {
+            break;
+        }
+        if (read_size == 0) {
+            valid = observed_size == expected_size &&
+                    observed_fingerprint ==
+                        expected_fingerprint;
+            break;
+        }
+        observed_size += (size_t)read_size;
+        observed_fingerprint = result_fingerprint_update(
+            observed_fingerprint,
+            buffer,
+            (size_t)read_size);
+        if (observed_size > expected_size) {
+            break;
+        }
+    }
+    if (sceIoClose(fd) < 0) {
+        valid = false;
+    }
+    memset(buffer, 0, sizeof(buffer));
+    return valid;
+}
+
+static bool write_results_path(
     const controller_state *state,
     const char *path)
 {
     char line[640];
-    SceUID fd;
+    result_writer writer;
     uint32_t index;
     int size;
 
-    fd = sceIoOpen(
+    memset(&writer, 0, sizeof(writer));
+    writer.fd = sceIoOpen(
         path,
         SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC,
         0666);
-    if (fd < 0) {
-        return;
+    if (writer.fd < 0) {
+        return false;
     }
+    writer.fingerprint = UINT32_C(2166136261);
+    writer.valid = true;
     size = snprintf(
         line,
         sizeof(line),
@@ -115,7 +204,9 @@ static void write_results_path(
         "  \"phase_index\":%u,\n"
         "  \"phase_count\":%u,\n"
         "  \"test_offset\":%u,\n"
+        "  \"test_count\":%u,\n"
         "  \"result_cleared\":%s,\n"
+        "  \"launch_committed\":%s,\n"
         "  \"target_title_id\":\"%s\",\n"
         "  \"controller_title_id\":\"VCFC00001\",\n"
         "  \"target_firmware\":\"3.65\",\n"
@@ -131,10 +222,14 @@ static void write_results_path(
         state->phase_index,
         VC_FTG_CONTROLLER_PHASE_COUNT,
         state->test_offset,
+        state->expected_test_count,
         state->result_cleared ? "true" : "false",
+        state->launch_committed ? "true" : "false",
         VITACHEAT_FOREIGN_GATE_TARGET_TITLE_ID);
     if (size > 0 && (size_t)size < sizeof(line)) {
-        (void)write_all(fd, line, (size_t)size);
+        result_writer_write(&writer, line, (size_t)size);
+    } else {
+        writer.valid = false;
     }
     for (index = 0u; index < state->result_count; ++index) {
         size = snprintf(
@@ -147,7 +242,9 @@ static void write_results_path(
             state->results[index].passed ? "pass" : "fail",
             state->results[index].code);
         if (size > 0 && (size_t)size < sizeof(line)) {
-            (void)write_all(fd, line, (size_t)size);
+            result_writer_write(&writer, line, (size_t)size);
+        } else {
+            writer.valid = false;
         }
     }
     size = snprintf(
@@ -156,7 +253,9 @@ static void write_results_path(
         "\n  ],\n"
         "  \"lifecycle_diagnostics\":[\n");
     if (size > 0 && (size_t)size < sizeof(line)) {
-        (void)write_all(fd, line, (size_t)size);
+        result_writer_write(&writer, line, (size_t)size);
+    } else {
+        writer.valid = false;
     }
     for (index = 0u; index < state->diagnostic_count; ++index) {
         const diagnostic_snapshot *snapshot =
@@ -182,7 +281,9 @@ static void write_results_path(
             snapshot->last_lifecycle_result,
             snapshot->last_lifecycle_stage);
         if (size > 0 && (size_t)size < sizeof(line)) {
-            (void)write_all(fd, line, (size_t)size);
+            result_writer_write(&writer, line, (size_t)size);
+        } else {
+            writer.valid = false;
         }
     }
     size = snprintf(
@@ -207,15 +308,30 @@ static void write_results_path(
             ? "pass"
             : "fail");
     if (size > 0 && (size_t)size < sizeof(line)) {
-        (void)write_all(fd, line, (size_t)size);
+        result_writer_write(&writer, line, (size_t)size);
+    } else {
+        writer.valid = false;
     }
-    (void)sceIoClose(fd);
+    if (writer.valid) {
+        writer.valid = sceIoSyncByFd(writer.fd, 0) >= 0;
+    }
+    if (sceIoClose(writer.fd) < 0) {
+        writer.valid = false;
+    }
+    if (writer.valid) {
+        writer.valid = verify_result_file(
+            path, writer.size, writer.fingerprint);
+    }
+    memset(line, 0, sizeof(line));
+    return writer.valid;
 }
 
-static void write_results(const controller_state *state)
+static bool write_results(const controller_state *state)
 {
-    write_results_path(state, VC_FTG_CONTROLLER_RESULT_PATH);
-    write_results_path(state, state->phase_result_path);
+    return write_results_path(
+               state, state->phase_result_path) &&
+           write_results_path(
+               state, VC_FTG_CONTROLLER_RESULT_PATH);
 }
 
 static void record_diagnostic_snapshot(
@@ -294,7 +410,19 @@ static bool record_result(
         name,
         passed ? "pass" : "fail",
         code);
-    write_results(state);
+    if (!write_results(state)) {
+        state->persistence_failed = true;
+        if (passed) {
+            test_result *result =
+                &state->results[state->result_count - 1u];
+
+            result->passed = false;
+            result->code = VC_FTG_RESULT_PLATFORM_FAILURE;
+            --state->passed;
+            ++state->failed;
+        }
+        passed = false;
+    }
     return passed;
 }
 
@@ -306,7 +434,9 @@ static void fail_last_result(
 
     if (state->result_count == 0u) {
         ++state->failed;
-        write_results(state);
+        if (!write_results(state)) {
+            state->persistence_failed = true;
+        }
         return;
     }
     result = &state->results[state->result_count - 1u];
@@ -316,7 +446,9 @@ static void fail_last_result(
         --state->passed;
         ++state->failed;
     }
-    write_results(state);
+    if (!write_results(state)) {
+        state->persistence_failed = true;
+    }
 }
 
 static void init_status_request(
@@ -438,7 +570,11 @@ static bool clear_artifact(const char *path)
     if (fd < 0) {
         return false;
     }
+    result = sceIoSyncByFd(fd, 0) >= 0;
     if (sceIoClose(fd) < 0) {
+        result = false;
+    }
+    if (!result) {
         return false;
     }
     fd = sceIoOpen(path, SCE_O_RDONLY, 0);
@@ -556,6 +692,9 @@ static bool write_checkpoint(
         goto finish;
     }
     result = write_all(fd, expected, sizeof(expected));
+    if (result) {
+        result = sceIoSyncByFd(fd, 0) >= 0;
+    }
     if (sceIoClose(fd) < 0) {
         result = false;
     }
@@ -659,16 +798,89 @@ static int launch_target(void)
         VITACHEAT_FOREIGN_GATE_TARGET_TITLE_ID);
 }
 
+static bool restore_launch_pending(
+    vc_ftg_controller_checkpoint *checkpoint)
+{
+    return vc_ftg_controller_checkpoint_cancel_launch(
+               checkpoint) &&
+           write_checkpoint(checkpoint);
+}
+
+static bool prepare_target_launch(
+    controller_state *state,
+    vc_ftg_controller_checkpoint *checkpoint,
+    const char *test_name)
+{
+    vc_ftg_controller_launch_guard guard;
+
+    vc_ftg_controller_launch_guard_init(&guard);
+    if (state->persistence_failed ||
+        !write_checkpoint(checkpoint)) {
+        (void)record_result(
+            state,
+            test_name,
+            false,
+            VC_FTG_RESULT_PLATFORM_FAILURE);
+        return false;
+    }
+    if (!vc_ftg_controller_checkpoint_commit_launch(
+            checkpoint) ||
+        !write_checkpoint(checkpoint)) {
+        (void)restore_launch_pending(checkpoint);
+        (void)record_result(
+            state,
+            test_name,
+            false,
+            VC_FTG_RESULT_PLATFORM_FAILURE);
+        return false;
+    }
+    if (!vc_ftg_controller_launch_guard_checkpoint_verified(
+            &guard)) {
+        (void)restore_launch_pending(checkpoint);
+        return false;
+    }
+    state->launch_committed = true;
+    if (!record_result(
+            state,
+            test_name,
+            true,
+            VC_FTG_RESULT_OK)) {
+        state->launch_committed = false;
+        (void)restore_launch_pending(checkpoint);
+        return false;
+    }
+    return vc_ftg_controller_launch_guard_results_verified(
+               &guard) &&
+           vc_ftg_controller_launch_guard_ready(&guard);
+}
+
+static void reject_target_launch(
+    controller_state *state,
+    vc_ftg_controller_checkpoint *checkpoint,
+    int result)
+{
+    state->launch_committed = false;
+    if (!restore_launch_pending(checkpoint)) {
+        result = VC_FTG_RESULT_PLATFORM_FAILURE;
+    }
+    fail_last_result(state, result);
+}
+
 static int finish_controller(controller_state *state)
 {
-    write_results(state);
+    const bool persisted = write_results(state);
+
+    if (!persisted) {
+        state->persistence_failed = true;
+    }
     sceClibPrintf(
         "VCFG phase=%u summary passed=%u failed=%u path=%s\n",
         state->phase_index,
         state->passed,
         state->failed,
         VC_FTG_CONTROLLER_RESULT_PATH);
-    return state->failed == 0u &&
+    return !state->persistence_failed &&
+                   state->failed == 0u &&
                    state->result_count ==
                        state->expected_test_count
                ? 0
@@ -694,8 +906,8 @@ static int run_phase_1(
         "baseline-and-generation-1-launch",
         VC_FTG_CONTROLLER_PHASE_1_RESULT_PATH,
         1u,
-        0u,
-        8u,
+        VC_FTG_CONTROLLER_PHASE_1_TEST_OFFSET,
+        VC_FTG_CONTROLLER_PHASE_1_TEST_COUNT,
         result_cleared);
     if (!record_result(
             &state,
@@ -784,30 +996,21 @@ static int run_phase_1(
                 &baseline_counts) &&
             write_checkpoint(&checkpoint);
 
-        result = checkpoint_ready
-                     ? launch_target()
-                     : VC_FTG_RESULT_PLATFORM_FAILURE;
-        if (result < 0) {
-            (void)clear_artifact(
-                VC_FTG_CONTROLLER_CHECKPOINT_PATH);
-        }
-        if (!record_result(
+        if (!checkpoint_ready ||
+            !prepare_target_launch(
                 &state,
-                "launch-target",
-                checkpoint_ready && result >= 0,
-                result)) {
-            goto finish;
-        }
-        if (!vc_ftg_controller_checkpoint_commit_launch(
-                &checkpoint) ||
-            !write_checkpoint(&checkpoint)) {
-            (void)clear_artifact(
-                VC_FTG_CONTROLLER_CHECKPOINT_PATH);
-            fail_last_result(
-                &state, VC_FTG_RESULT_PLATFORM_FAILURE);
+                &checkpoint,
+                "commit-target-launch")) {
             goto finish;
         }
     }
+    result = launch_target();
+    if (result < 0) {
+        reject_target_launch(&state, &checkpoint, result);
+        goto finish;
+    }
+    memset(&checkpoint, 0, sizeof(checkpoint));
+    return 0;
 
 finish:
     memset(&checkpoint, 0, sizeof(checkpoint));
@@ -837,8 +1040,8 @@ static int run_phase_2(
         "generation-1-validation-and-generation-2-launch",
         VC_FTG_CONTROLLER_PHASE_2_RESULT_PATH,
         2u,
-        8u,
-        20u,
+        VC_FTG_CONTROLLER_PHASE_2_TEST_OFFSET,
+        VC_FTG_CONTROLLER_PHASE_2_TEST_COUNT,
         result_cleared);
     if (!result_cleared) {
         state.failed = 1u;
@@ -1109,30 +1312,18 @@ static int run_phase_2(
             goto finish;
         }
     }
-    {
-        const bool checkpoint_pending =
-            write_checkpoint(checkpoint);
-
-        result = checkpoint_pending
-                     ? launch_target()
-                     : VC_FTG_RESULT_PLATFORM_FAILURE;
-        if (result < 0) {
-            (void)clear_artifact(
-                VC_FTG_CONTROLLER_CHECKPOINT_PATH);
-        }
-    }
-    if (record_result(
+    if (!prepare_target_launch(
             &state,
-            "relaunch-target",
-            result >= 0,
-            result) &&
-        (!vc_ftg_controller_checkpoint_commit_launch(
-             checkpoint) ||
-         !write_checkpoint(checkpoint))) {
-        (void)clear_artifact(
-            VC_FTG_CONTROLLER_CHECKPOINT_PATH);
-        fail_last_result(&state, VC_FTG_RESULT_PLATFORM_FAILURE);
+            checkpoint,
+            "commit-target-relaunch")) {
+        goto finish;
     }
+    result = launch_target();
+    if (result < 0) {
+        reject_target_launch(&state, checkpoint, result);
+        goto finish;
+    }
+    return 0;
 
 finish:
     return finish_controller(&state);
@@ -1160,8 +1351,8 @@ static int run_phase_3(
         "generation-2-validation",
         VC_FTG_CONTROLLER_PHASE_3_RESULT_PATH,
         3u,
-        28u,
-        7u,
+        VC_FTG_CONTROLLER_PHASE_3_TEST_OFFSET,
+        VC_FTG_CONTROLLER_PHASE_3_TEST_COUNT,
         result_cleared);
     if (!result_cleared) {
         state.failed = 1u;

@@ -238,6 +238,14 @@ static void fuzz_controller_protocol(
         &decoded));
     fuzz_check(vc_ftg_controller_checkpoint_encode(
         &decoded, encoded));
+    fuzz_check(vc_ftg_controller_checkpoint_cancel_launch(
+        &decoded));
+    fuzz_check(vc_ftg_controller_checkpoint_encode(
+        &decoded, encoded));
+    fuzz_check(vc_ftg_controller_checkpoint_commit_launch(
+        &decoded));
+    fuzz_check(vc_ftg_controller_checkpoint_encode(
+        &decoded, encoded));
     {
         uint64_t resume_run_id =
             transaction_id ^ UINT64_C(0x9e3779b97f4a7c15);
@@ -264,6 +272,84 @@ static void fuzz_controller_protocol(
         encoded[corrupt_index] ^= UINT8_C(1);
         fuzz_check(!vc_ftg_controller_checkpoint_decode(
             encoded, sizeof(encoded), &decoded));
+    }
+    {
+        vc_ftg_controller_host_state host;
+        vc_ftg_controller_phase_evidence phase;
+        vc_ftg_controller_launch_guard guard;
+
+        vc_ftg_controller_launch_guard_init(&guard);
+        fuzz_check(
+            vc_ftg_controller_launch_guard_checkpoint_verified(
+                &guard));
+        fuzz_check(
+            vc_ftg_controller_launch_guard_results_verified(
+                &guard));
+        fuzz_check(vc_ftg_controller_launch_guard_ready(
+            &guard));
+        vc_ftg_controller_host_init(&host);
+        memset(&phase, 0, sizeof(phase));
+        phase.run_id = UINT64_C(0x100);
+        phase.transaction_id = UINT64_C(0x100);
+        phase.phase_index = 1u;
+        phase.test_offset =
+            VC_FTG_CONTROLLER_PHASE_1_TEST_OFFSET;
+        phase.test_count =
+            VC_FTG_CONTROLLER_PHASE_1_TEST_COUNT;
+        phase.result_cleared = true;
+        phase.phase_complete = true;
+        phase.launch_committed = true;
+        fuzz_check(vc_ftg_controller_host_accept_phase(
+            &host, &phase));
+        fuzz_check(!vc_ftg_controller_host_can_send_input(
+            &host, 1u, false));
+        fuzz_check(vc_ftg_controller_host_commit_input(
+            &host, 1u, true));
+        phase.run_id = UINT64_C(0x101);
+        phase.previous_run_id = UINT64_C(0x100);
+        phase.phase_index = 2u;
+        phase.test_offset =
+            VC_FTG_CONTROLLER_PHASE_2_TEST_OFFSET;
+        phase.test_count =
+            VC_FTG_CONTROLLER_PHASE_2_TEST_COUNT;
+        fuzz_check(vc_ftg_controller_host_accept_phase(
+            &host, &phase));
+        fuzz_check(vc_ftg_controller_host_commit_input(
+            &host, 2u, true));
+        phase.run_id = UINT64_C(0x102);
+        phase.previous_run_id = UINT64_C(0x101);
+        phase.phase_index = 3u;
+        phase.test_offset =
+            VC_FTG_CONTROLLER_PHASE_3_TEST_OFFSET;
+        phase.test_count =
+            VC_FTG_CONTROLLER_PHASE_3_TEST_COUNT;
+        phase.launch_committed = false;
+        fuzz_check(vc_ftg_controller_host_accept_phase(
+            &host, &phase));
+        fuzz_check(vc_ftg_controller_host_complete(&host));
+
+        vc_ftg_controller_host_init(&host);
+        phase.run_id = fuzz_u64(data, size);
+        phase.transaction_id =
+            fuzz_u64(data + (size > 1u ? 1u : 0u),
+                     size > 1u ? size - 1u : 0u);
+        phase.previous_run_id =
+            fuzz_u64(data + (size > 2u ? 2u : 0u),
+                     size > 2u ? size - 2u : 0u);
+        phase.phase_index =
+            size == 0u ? 0u : data[0] % 5u;
+        phase.test_offset =
+            size > 1u ? data[1] : 0u;
+        phase.test_count =
+            size > 2u ? data[2] : 0u;
+        phase.result_cleared =
+            size > 3u && (data[3] & 1u) != 0u;
+        phase.phase_complete =
+            size > 3u && (data[3] & 2u) != 0u;
+        phase.launch_committed =
+            size > 3u && (data[3] & 4u) != 0u;
+        (void)vc_ftg_controller_host_accept_phase(
+            &host, &phase);
     }
 }
 

@@ -105,9 +105,12 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
       `TARGET_UNAVAILABLE`; no input/read occurred. Offline retail-3.65
       evidence predicted one create followed by at least 19 starts. A later
       run proved exact create-bound authorization with zero starts and proved
-      that the controller is replaced, not resumed. The restart-aware
-      three-process protocol preserves kernel authority and now awaits a
-      separately authorized foreign-read run.
+      that the controller is replaced, not resumed. The first restart-aware
+      run reached exact phase-1/startup evidence but replacement interrupted
+      the immutable phase-result write before input. The corrected schema-v5
+      protocol commits and verifies that artifact before AppMgr, preserves
+      kernel authority, and now awaits a separately authorized foreign-read
+      run.
 - [ ] Design, review, and hardware-gate strong foreign-process attestation and
       a production target-read adapter before capturing any foreign bytes.
 - [x] Reconcile trusted catalog addresses into verified module/segment-relative

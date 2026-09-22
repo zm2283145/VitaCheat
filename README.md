@@ -207,7 +207,12 @@ new controller process rather than resuming the old one, so the run stopped
 before open/read. The current restart-aware controller splits the canonical 35
 tests across three processes using a fixed non-authoritative checkpoint; zero
 or 19-or-more successful start revalidations are the only accepted evidence
-profiles. The new protocol is host-tested and Vita-cross-built but not yet
+profiles. Its first hardware run reached complete phase-1/current and exact
+target startup evidence but exposed that foreground replacement occurred
+between the current and immutable phase-result writes; no input or read
+occurred. Schema v5 now syncs, closes, and rereads the immutable phase result
+and wait checkpoint before AppMgr, with no post-launch execution dependency.
+That correction is host-tested and Vita-cross-built but not yet
 hardware-tested. Foreign copying and unload remain unproven, and no userspace
 marker or retail/production authority is claimed.
 
@@ -359,8 +364,10 @@ kernel-UID/process-UID equality assumption; the isolated gate now binds both
 UIDs internally. The corrected run device-validated the bounded source-owned
 same-process path. The separate source-owned foreign-target generation gate has hardware evidence
 for create-bound authorization and controller process replacement but no
-foreign-read pass. Its restart-aware three-process result/checkpoint protocol
-is host- and cross-build validated and awaits a separately authorized rerun.
+foreign-read pass. A restart-aware run exposed and preserved a prelaunch
+phase-result ordering failure before input; its corrected schema-v5
+three-process result/checkpoint protocol is host- and cross-build validated
+and awaits a separately authorized rerun.
 This remains neither a retail-game nor a production reader.
 
 ## Relationship to VitaDebugger

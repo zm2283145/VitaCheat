@@ -10,6 +10,12 @@
 #define VC_FTG_CONTROLLER_CHECKPOINT_SIZE 96u
 #define VC_FTG_CONTROLLER_MIN_REVALIDATIONS UINT32_C(19)
 #define VC_FTG_CONTROLLER_PHASE_COUNT UINT32_C(3)
+#define VC_FTG_CONTROLLER_PHASE_1_TEST_OFFSET UINT32_C(0)
+#define VC_FTG_CONTROLLER_PHASE_1_TEST_COUNT UINT32_C(8)
+#define VC_FTG_CONTROLLER_PHASE_2_TEST_OFFSET UINT32_C(8)
+#define VC_FTG_CONTROLLER_PHASE_2_TEST_COUNT UINT32_C(20)
+#define VC_FTG_CONTROLLER_PHASE_3_TEST_OFFSET UINT32_C(28)
+#define VC_FTG_CONTROLLER_PHASE_3_TEST_COUNT UINT32_C(7)
 
 typedef enum vc_ftg_controller_phase {
     VC_FTG_CONTROLLER_PHASE_INVALID = 0,
@@ -26,6 +32,23 @@ typedef enum vc_ftg_controller_checkpoint_observation {
     VC_FTG_CONTROLLER_CHECKPOINT_VALID = 1,
     VC_FTG_CONTROLLER_CHECKPOINT_INVALID = 2
 } vc_ftg_controller_checkpoint_observation;
+
+typedef enum vc_ftg_controller_host_step {
+    VC_FTG_CONTROLLER_HOST_EXPECT_PHASE_1 = 1,
+    VC_FTG_CONTROLLER_HOST_EXPECT_PROMPT_1 = 2,
+    VC_FTG_CONTROLLER_HOST_EXPECT_PHASE_2 = 3,
+    VC_FTG_CONTROLLER_HOST_EXPECT_PROMPT_2 = 4,
+    VC_FTG_CONTROLLER_HOST_EXPECT_PHASE_3 = 5,
+    VC_FTG_CONTROLLER_HOST_COMPLETE = 6,
+    VC_FTG_CONTROLLER_HOST_FAILED = 7
+} vc_ftg_controller_host_step;
+
+typedef enum vc_ftg_controller_launch_step {
+    VC_FTG_CONTROLLER_LAUNCH_PREPARING = 1,
+    VC_FTG_CONTROLLER_LAUNCH_CHECKPOINT_VERIFIED = 2,
+    VC_FTG_CONTROLLER_LAUNCH_RESULTS_VERIFIED = 3,
+    VC_FTG_CONTROLLER_LAUNCH_FAILED = 4
+} vc_ftg_controller_launch_step;
 
 typedef struct vc_ftg_controller_counts {
     uint32_t create_callback_count;
@@ -50,6 +73,29 @@ typedef struct vc_ftg_controller_checkpoint {
     uint32_t reserved1;
     uint32_t integrity;
 } vc_ftg_controller_checkpoint;
+
+typedef struct vc_ftg_controller_phase_evidence {
+    uint64_t run_id;
+    uint64_t transaction_id;
+    uint64_t previous_run_id;
+    uint32_t phase_index;
+    uint32_t test_offset;
+    uint32_t test_count;
+    bool result_cleared;
+    bool phase_complete;
+    bool launch_committed;
+} vc_ftg_controller_phase_evidence;
+
+typedef struct vc_ftg_controller_host_state {
+    uint64_t transaction_id;
+    uint64_t previous_run_id;
+    vc_ftg_controller_host_step step;
+    uint32_t input_count;
+} vc_ftg_controller_host_state;
+
+typedef struct vc_ftg_controller_launch_guard {
+    vc_ftg_controller_launch_step step;
+} vc_ftg_controller_launch_guard;
 
 _Static_assert(
     sizeof(vc_ftg_controller_checkpoint) ==
@@ -84,6 +130,9 @@ bool vc_ftg_controller_checkpoint_advance_generation_2(
 bool vc_ftg_controller_checkpoint_commit_launch(
     vc_ftg_controller_checkpoint *checkpoint);
 
+bool vc_ftg_controller_checkpoint_cancel_launch(
+    vc_ftg_controller_checkpoint *checkpoint);
+
 bool vc_ftg_controller_checkpoint_begin_resume(
     vc_ftg_controller_checkpoint *checkpoint,
     uint64_t controller_run_id);
@@ -105,5 +154,37 @@ vc_ftg_controller_checkpoint_observe(
 
 bool vc_ftg_controller_checkpoint_validate(
     const vc_ftg_controller_checkpoint *checkpoint);
+
+void vc_ftg_controller_host_init(
+    vc_ftg_controller_host_state *state);
+
+bool vc_ftg_controller_host_accept_phase(
+    vc_ftg_controller_host_state *state,
+    const vc_ftg_controller_phase_evidence *evidence);
+
+bool vc_ftg_controller_host_can_send_input(
+    const vc_ftg_controller_host_state *state,
+    uint32_t generation,
+    bool fresh_prompt_complete);
+
+bool vc_ftg_controller_host_commit_input(
+    vc_ftg_controller_host_state *state,
+    uint32_t generation,
+    bool fresh_prompt_complete);
+
+bool vc_ftg_controller_host_complete(
+    const vc_ftg_controller_host_state *state);
+
+void vc_ftg_controller_launch_guard_init(
+    vc_ftg_controller_launch_guard *guard);
+
+bool vc_ftg_controller_launch_guard_checkpoint_verified(
+    vc_ftg_controller_launch_guard *guard);
+
+bool vc_ftg_controller_launch_guard_results_verified(
+    vc_ftg_controller_launch_guard *guard);
+
+bool vc_ftg_controller_launch_guard_ready(
+    const vc_ftg_controller_launch_guard *guard);
 
 #endif

@@ -1,5 +1,5 @@
 {
-  "schema": "vitacheat.foreign-target-gate.manual-run.v5",
+  "schema": "vitacheat.foreign-target-gate.manual-run.v6",
   "base": {
     "native_read_gate_commit": "1233c08656a1c219d8de0fd7dde1257986ed3a97",
     "foreign_generation_gate_parent": "0548db67f7e992c3c7f618d36329bbeab51b0208",
@@ -51,6 +51,27 @@
     },
     "proof": "create-bound target authorization succeeded and the target transition started a new controller process",
     "non_proof": "no OpenExactFixture success, foreign read, generation-2 input, or canonical 35-test pass occurred",
+    "restored": true
+  },
+  "restart_aware_hardware_boundary": {
+    "transaction_id": "0000000009502c29",
+    "phase_1_current_tests_passed": 8,
+    "phase_1_current_complete": true,
+    "phase_1_immutable_result_bytes": 0,
+    "checkpoint_phase": "wait-generation-1",
+    "startup_stage": 6,
+    "startup_results": {
+      "sentinel_lookup": 0,
+      "wrong_caller_open": -12,
+      "layout_write": 0,
+      "fixture_write": 0,
+      "readiness_attempt_count": 1
+    },
+    "input_count": 0,
+    "proof": "foreground target replacement occurred after the current result write and before the immutable phase-1 result write",
+    "non_proof": "no phase-2 process, Cross input, open, foreign read, exit/relaunch, or canonical 35-test pass occurred",
+    "evidence_manifest_sha256": "5f47a7076eb74c1988b06267add53ebe3a6c7ef250195491ec362331c8e0a507",
+    "final_handoff_sha256": "297a131a799fe20e1f8afac6e2e7d27a9ec398de89a319a0e8aaf0aba03d6ea7",
     "restored": true
   },
   "lifecycle_correction": {
@@ -116,8 +137,8 @@
     },
     {
       "name": "vitacheat-foreign-target-controller.vpk",
-      "bytes": 12273,
-      "sha256": "fc7e4b25c077d24a36ac568e5ee3ed71a3d2407ab7dc1013b426927333ee727f"
+      "bytes": 12891,
+      "sha256": "8c03d66c808c6dd5d93e170d73bcb5eca6d0369ffaf1ca9fdd0935090ea68447"
     },
     {
       "name": "libVitaCheatForeignGate_stub.a",
@@ -156,8 +177,8 @@
         },
         {
           "path": "eboot.bin",
-          "bytes": 15288,
-          "sha256": "2d89501bc5dbb892f3906d6d2f2b7999bd441db772ba2c96784a297dc7eedb70",
+          "bytes": 15898,
+          "sha256": "6f94e094f8469dfb01cf0f2a6d5be18d10c0472f7b123556d8c8ee3f95298f8d",
           "zip_timestamp": "1980-01-01T00:00:00"
         }
       ]
@@ -166,13 +187,13 @@
   "inventories": [
     {
       "name": "symbol-inventory.txt",
-      "bytes": 1878,
-      "sha256": "def041da241f14e50770b0c3aa2361be05e1a3696f6a30720dc0b7ebd089ffb4"
+      "bytes": 1893,
+      "sha256": "c63933bd04ce40f4eac770f911c091c74d867e454c244173a80594d078be2a01"
     },
     {
       "name": "artifact-inventory.txt",
       "bytes": 430,
-      "sha256": "8021ea65ca8d3e93f76410c39ca123d0149278d76a613b6da874fbf21ab77259"
+      "sha256": "26794a43885aa9df82c1dc1ba1182e3544bf363ed18c4a4d9e86ac8aa53e26a4"
     }
   ],
   "startup_stage": {
@@ -335,29 +356,44 @@
     "kernel_config_line": "ur0:tai/vitacheat-foreign-target-gate.skprx",
     "requires_reboot_before_apps": true
   },
+  "companion_control": {
+    "required_version_reply": "vitacompanion 1.07",
+    "official_source_commit": "d46772344d926e6765943703adf1a1518c20e10e",
+    "termination_syntax": "quit <title-id|all>",
+    "allowed_replies": [
+      "Quit.",
+      "Apps quit.",
+      "explicit error"
+    ],
+    "forbidden_legacy_command": "kill",
+    "rule": "Never infer 1.07 behavior from 1.06. Use quit only when host recovery is separately necessary and preserve the exact command/reply; the normal three-phase gate uses the controller's documented AppMgr path."
+  },
   "prelaunch_freshness": [
     "Before launch, preserve the complete prior controller result, three phase results, checkpoint, and their exact bytes/hashes/run IDs when present.",
-    "With no valid active checkpoint, the controller first requires kernel READY with TARGET_NONE, then truncates and verifies the current result and all phase paths before writing schema vitacheat.foreign-target-gate.result.v4 with build_id VCFG-RESULT-V4.",
+    "With no valid active checkpoint, the controller first requires kernel READY with TARGET_NONE, then truncates, syncs, closes, and verifies the current result and all phase paths before writing schema vitacheat.foreign-target-gate.result.v5 with build_id VCFG-RESULT-V5.",
     "An exact preserved prior result is stale waiting evidence, not an anomaly. Ignore it until an empty observation or a complete current-identity document appears.",
-    "A complete phase result is fresh only when schema/build/title/firmware/scope match, result_cleared is true, run_id is nonzero, and transaction/previous-run/phase/index/offset metadata exactly forms the three-run chain.",
+    "A complete phase result is fresh only when schema/build/title/firmware/scope match, result_cleared is true, run_id is nonzero, transaction/previous-run/phase/index/offset/count metadata exactly forms the three-run chain, and launch_committed is true for phases 1/2 and false for phase 3.",
     "The 96-byte checkpoint is valid only with exact magic/version/size/integrity, zero reserved fields, distinct run IDs, monotonic counters, and a permitted phase transition. Zero bytes means no active transaction. Wait states 1/2 are resumable exactly once; launch-pending/running states 3-6 are preserved incomplete-transaction blockers; any malformed/partial checkpoint also stops without truncation.",
-    "Preserve partial current writes and poll read-only. Reject a structurally complete malformed/current-identity mismatch; never infer tests from a partial document.",
+    "Preserve zero-byte and partial current or phase writes and poll read-only only until the bounded prelaunch artifact deadline. Reject a structurally complete malformed/current-identity mismatch; never infer tests from a partial document.",
     "Before each generation the controller truncates and verifies zero bytes at ux0:data/vitacheat-foreign-target-layout.bin.",
     "Before each generation the controller truncates and verifies zero bytes at ux0:data/vitacheat-foreign-target-startup.bin.",
     "Before each generation the controller truncates and verifies zero bytes at ux0:data/vitacheat-foreign-target-fixture.json.",
-    "Any cleanup/open/close/readback failure is recorded and stops before launch."
+    "Any cleanup/open/write/sync/close/readback failure is recorded and stops before launch.",
+    "For phases 1 and 2, the controller writes and verifies the launch-pending checkpoint, advances and verifies the wait checkpoint, records the launch-commit test, then writes, syncs, closes, and rereads the immutable phase result before the AppMgr call.",
+    "Never wait for or require any controller statement, result write, checkpoint transition, or diagnostic after a successful foreground AppMgr launch call; immediate suspension or replacement at its return boundary is expected.",
+    "A launch-commit marker is orchestration evidence only. It never authorizes input, open, or read; fresh exact target startup/layout/fixture evidence and independent kernel status/counter checks remain mandatory."
   ],
   "run": [
     "Preserve the prior current/phase results and checkpoint before launch. During polling, treat exact preserved bytes as stale waiting evidence rather than a test-order failure.",
     "Launch VCFC00001 before VCFT00001.",
-    "Require phase 1 schema-v4 tests 1-8 at offset 0 with exact build/schema/transaction/run identity and passing clear-controller-result; preserve its pre-target status-v2 baseline, then allow the controller to verify target-unavailable, clear the three target evidence paths, persist the phase-1 checkpoint, and launch VCFT00001.",
+    "Require phase 1 schema-v5 tests 1-8 at offset 0 with exact build/schema/transaction/run identity, launch_committed=true, and passing clear-controller-result. The immutable phase result and wait-generation-1 checkpoint must already be complete and verified before VCFT00001 can replace or suspend the controller.",
     "Poll the startup-stage path read-only. Preserve every distinct invalid/partial byte sequence and continue polling without input.",
     "Require one complete valid v2 prompt-ready record with exact build/title/schema identity, sentinel result 0, wrong-caller last result -12, readiness probe result 0, exactly one attempt, bounded elapsed time, layout result 0, and fixture result 0. Any delayed -13 to -12 transition contradicts create-before-user-entry and stops before input.",
     "Require the exact 32-byte layout and complete fixture JSON independently; the startup record alone is never target-start or read authority.",
     "Send exactly one documented bounded input: press cross; wait 100ms; release cross.",
-    "After the first X, require a distinct controller run with phase 2 tests 9-28 at offset 8 and the exact transaction/previous-run chain. Generation 1 must show exactly one target-create match/authorization delta, at least one create callback delta, either zero start callbacks/revalidations or at least 19 successful same-PID start revalidations, and zero saturation.",
-    "Allow phase 2 to require kernel TARGET_STARTED, read, destroy only VCFT00001, prove the exact exit lifecycle stage, verify the stale handle, clear all three target evidence paths, and relaunch VCFT00001.",
-    "Repeat the prompt-ready validation and one bounded X input for generation 2. Require a third distinct controller run with phase 3 tests 29-35 at offset 28 and the same permitted generation profile from the generation-1-exit baseline.",
+    "After the first X, require a distinct controller run with phase 2 tests 9-28 at offset 8, launch_committed=true, and the exact transaction/previous-run chain. Generation 1 must show exactly one target-create match/authorization delta, at least one create callback delta, either zero start callbacks/revalidations or at least 19 successful same-PID start revalidations, and zero saturation.",
+    "Allow phase 2 to require kernel TARGET_STARTED, read, destroy only VCFT00001, prove the exact exit lifecycle stage, verify the stale handle, clear all three target evidence paths, and commit the complete immutable phase-2 result and wait-generation-2 checkpoint before relaunching VCFT00001.",
+    "Repeat the prompt-ready validation and one bounded X input for generation 2. Require a third distinct controller run with phase 3 tests 29-35 at offset 28, launch_committed=false, and the same permitted generation profile from the generation-1-exit baseline.",
     "Require old-handle rejection, a distinct new handle, exact 64-byte relaunch read, close, zero-byte completed checkpoint, and exact concatenation of all three phase arrays into the canonical 35-test order.",
     "Retrieve current and all phase controller JSON files, checkpoint bytes, fixture JSON, startup records/partials, layouts, and all available serial lines beginning VCFG."
   ],
@@ -369,7 +405,7 @@
     "clear-fixture-layout",
     "clear-startup-stage",
     "clear-fixture-result",
-    "launch-target",
+    "commit-target-launch",
     "target-start-observed",
     "generation-1-create-bound-diagnostics",
     "fixture-layout",
@@ -389,7 +425,7 @@
     "clear-fixture-layout-before-relaunch",
     "clear-startup-stage-before-relaunch",
     "clear-fixture-result-before-relaunch",
-    "relaunch-target",
+    "commit-target-relaunch",
     "target-relaunch-observed",
     "generation-2-create-bound-diagnostics",
     "fixture-layout-after-relaunch",
@@ -455,7 +491,7 @@
       "action": "also validate layout and fixture JSON, then allow exactly one bounded X"
     },
     {
-      "observation": "current controller v4 lacks exactly one target-create match/authorization delta, reports 1-18 successful target start revalidations, or reports saturation/failure",
+      "observation": "current controller v5 lacks exactly one target-create match/authorization delta, reports 1-18 successful target start revalidations, or reports saturation/failure",
       "conclusion": "callback reachability, classification, snapshot binding, or idempotent revalidation contradicted both accepted evidence profiles",
       "action": "stop at the first failed controller test; preserve all lifecycle_diagnostics snapshots and perform no retry"
     },
@@ -468,6 +504,11 @@
       "observation": "phase result lacks exact offset/count/phase_complete or the three test arrays do not concatenate to the canonical 35-test order",
       "conclusion": "the replacement-process transition did not complete the required phase",
       "action": "preserve current/phase/checkpoint bytes and stop without retry"
+    },
+    {
+      "observation": "phase 1/2 lacks launch_committed=true, phase 3 does not have launch_committed=false, or a required phase artifact is zero/partial when its bounded deadline expires",
+      "conclusion": "the prelaunch durable handoff is absent or inconsistent",
+      "action": "send no input; preserve phase/current/checkpoint bytes and stop without retry"
     },
     {
       "observation": "valid stage 7 persists",

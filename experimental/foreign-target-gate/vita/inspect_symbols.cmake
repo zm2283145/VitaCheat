@@ -78,6 +78,7 @@ set(expected_controller_symbols
     sceIoClose
     sceIoOpen
     sceIoRead
+    sceIoSyncByFd
     sceIoWrite
     sceKernelAllocMemBlock
     sceKernelCreateLwMutex

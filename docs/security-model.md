@@ -75,8 +75,16 @@ generation, revision, module identity, fingerprint, or address and never
 reconciles or authorizes a process. Controller-side truncation plus explicit
 schema/build/run identity prevents preserved old output from becoming current
 evidence. Hardware proved create-bound target authorization and controller
-process replacement, but no foreign-copy pass exists; restart-aware
-orchestration and unregister quiescence remain unproven.
+process replacement. A restart-aware run then proved exact phase-1/startup
+progress but exposed that foreground replacement could occur between current
+and immutable phase-result writes; no input or foreign copy occurred. Result
+schema v5 now syncs, closes, and rereads the wait checkpoint and immutable
+phase artifact before AppMgr, and never relies on post-launch controller
+execution. These files and `launch_committed` remain non-authoritative:
+kernel-derived caller/title, process generation, module identity, lifecycle
+revision, session binding, and range validation are still required. No
+foreign-copy pass exists; the corrected persistence protocol and unregister
+quiescence remain unproven on hardware.
 
 ## Authority model
 
@@ -374,8 +382,10 @@ does not satisfy any of those requirements.
   not document callback drain semantics.
 - No foreign-read device pass exists yet. A guarded create-bound run proved one
   exact target-create authorization, zero start callbacks/revalidations, and
-  controller process replacement, then stopped before open/read. The
-  restart-aware three-process protocol is host/cross-build validated only. See
+  controller process replacement, then stopped before open/read. A later
+  restart-aware run reached complete phase-1/startup evidence but exposed a
+  prelaunch phase-result ordering bug before input. The corrected schema-v5
+  three-process protocol is host/cross-build validated only. See
   `docs/foreign-target-generation-gate.md` for exact non-claims and the manual
   protocol.
 
