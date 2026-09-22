@@ -1,4 +1,5 @@
 #include "fixture_protocol.h"
+#include "vitacheat/foreign_target_controller.h"
 #include "vitacheat/foreign_target_gate.h"
 #include "vitacheat/foreign_target_startup.h"
 
@@ -44,13 +45,7 @@ typedef struct diagnostic_snapshot {
     uint32_t last_lifecycle_stage;
 } diagnostic_snapshot;
 
-typedef struct lifecycle_counts {
-    uint32_t create_callback_count;
-    uint32_t start_callback_count;
-    uint32_t start_revalidation_count;
-    uint32_t target_create_match_count;
-    uint32_t target_create_authorized_count;
-} lifecycle_counts;
+typedef vc_ftg_controller_counts lifecycle_counts;
 
 typedef struct controller_state {
     test_result results[VC_FTG_MAX_TEST_RESULTS];
@@ -61,6 +56,14 @@ typedef struct controller_state {
     uint32_t passed;
     uint32_t failed;
     uint64_t run_id;
+    uint64_t transaction_id;
+    uint64_t previous_run_id;
+    const char *phase_name;
+    const char *phase_result_path;
+    uint32_t phase_index;
+    uint32_t test_offset;
+    uint32_t expected_test_count;
+    bool result_cleared;
 } controller_state;
 
 static bool write_all(
@@ -83,7 +86,9 @@ static bool write_all(
     return true;
 }
 
-static void write_results(const controller_state *state)
+static void write_results_path(
+    const controller_state *state,
+    const char *path)
 {
     char line[640];
     SceUID fd;
@@ -91,7 +96,7 @@ static void write_results(const controller_state *state)
     int size;
 
     fd = sceIoOpen(
-        VC_FTG_CONTROLLER_RESULT_PATH,
+        path,
         SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC,
         0666);
     if (fd < 0) {
@@ -104,6 +109,13 @@ static void write_results(const controller_state *state)
         "  \"schema\":\"" VC_FTG_CONTROLLER_RESULT_SCHEMA "\",\n"
         "  \"build_id\":\"" VC_FTG_CONTROLLER_RESULT_BUILD_ID "\",\n"
         "  \"run_id\":\"%08x%08x\",\n"
+        "  \"transaction_id\":\"%08x%08x\",\n"
+        "  \"previous_run_id\":\"%08x%08x\",\n"
+        "  \"phase\":\"%s\",\n"
+        "  \"phase_index\":%u,\n"
+        "  \"phase_count\":%u,\n"
+        "  \"test_offset\":%u,\n"
+        "  \"result_cleared\":%s,\n"
         "  \"target_title_id\":\"%s\",\n"
         "  \"controller_title_id\":\"VCFC00001\",\n"
         "  \"target_firmware\":\"3.65\",\n"
@@ -111,6 +123,15 @@ static void write_results(const controller_state *state)
         "  \"tests\":[\n",
         (unsigned int)(state->run_id >> 32u),
         (unsigned int)state->run_id,
+        (unsigned int)(state->transaction_id >> 32u),
+        (unsigned int)state->transaction_id,
+        (unsigned int)(state->previous_run_id >> 32u),
+        (unsigned int)state->previous_run_id,
+        state->phase_name,
+        state->phase_index,
+        VC_FTG_CONTROLLER_PHASE_COUNT,
+        state->test_offset,
+        state->result_cleared ? "true" : "false",
         VITACHEAT_FOREIGN_GATE_TARGET_TITLE_ID);
     if (size > 0 && (size_t)size < sizeof(line)) {
         (void)write_all(fd, line, (size_t)size);
@@ -169,15 +190,32 @@ static void write_results(const controller_state *state)
         sizeof(line),
         "\n  ],\n"
         "  \"summary\":{\"passed\":%u,\"failed\":%u,"
+        "\"expected_tests\":%u,\"phase_complete\":%s,"
         "\"result\":\"%s\"}\n"
         "}\n",
         state->passed,
         state->failed,
-        state->failed == 0u ? "pass" : "fail");
+        state->expected_test_count,
+        state->failed == 0u &&
+                state->result_count ==
+                    state->expected_test_count
+            ? "true"
+            : "false",
+        state->failed == 0u &&
+                state->result_count ==
+                    state->expected_test_count
+            ? "pass"
+            : "fail");
     if (size > 0 && (size_t)size < sizeof(line)) {
         (void)write_all(fd, line, (size_t)size);
     }
     (void)sceIoClose(fd);
+}
+
+static void write_results(const controller_state *state)
+{
+    write_results_path(state, VC_FTG_CONTROLLER_RESULT_PATH);
+    write_results_path(state, state->phase_result_path);
 }
 
 static void record_diagnostic_snapshot(
@@ -230,24 +268,6 @@ static void capture_lifecycle_counts(
         status->target_create_authorized_count;
 }
 
-static bool counter_advanced_by(
-    uint32_t current,
-    uint32_t baseline,
-    uint32_t minimum)
-{
-    return current >= baseline &&
-           current - baseline >= minimum;
-}
-
-static bool counter_advanced_exactly(
-    uint32_t current,
-    uint32_t baseline,
-    uint32_t expected)
-{
-    return current >= baseline &&
-           current - baseline == expected;
-}
-
 static bool record_result(
     controller_state *state,
     const char *name,
@@ -276,6 +296,27 @@ static bool record_result(
         code);
     write_results(state);
     return passed;
+}
+
+static void fail_last_result(
+    controller_state *state,
+    int code)
+{
+    test_result *result;
+
+    if (state->result_count == 0u) {
+        ++state->failed;
+        write_results(state);
+        return;
+    }
+    result = &state->results[state->result_count - 1u];
+    if (result->passed) {
+        result->passed = false;
+        result->code = code;
+        --state->passed;
+        ++state->failed;
+    }
+    write_results(state);
 }
 
 static void init_status_request(
@@ -412,6 +453,183 @@ static bool clear_artifact(const char *path)
     return result;
 }
 
+static bool read_exact_file(
+    const char *path,
+    uint8_t *buffer,
+    size_t size)
+{
+    SceUID fd;
+    size_t offset = 0u;
+    uint8_t extra = 0u;
+    bool result = false;
+
+    fd = sceIoOpen(path, SCE_O_RDONLY, 0);
+    if (fd < 0) {
+        return false;
+    }
+    while (offset < size) {
+        const SceSSize read_size = sceIoRead(
+            fd,
+            buffer + offset,
+            (SceSize)(size - offset));
+
+        if (read_size <= 0) {
+            goto finish;
+        }
+        offset += (size_t)read_size;
+    }
+    result = sceIoRead(fd, &extra, sizeof(extra)) == 0;
+
+finish:
+    if (sceIoClose(fd) < 0) {
+        result = false;
+    }
+    return result;
+}
+
+static vc_ftg_controller_checkpoint_observation read_checkpoint(
+    vc_ftg_controller_checkpoint *checkpoint)
+{
+    uint8_t bytes[VC_FTG_CONTROLLER_CHECKPOINT_SIZE + 1u];
+    SceUID fd;
+    size_t size = 0u;
+    vc_ftg_controller_checkpoint_observation observation;
+
+    memset(bytes, 0, sizeof(bytes));
+    fd = sceIoOpen(
+        VC_FTG_CONTROLLER_CHECKPOINT_PATH,
+        SCE_O_RDONLY,
+        0);
+    if (fd < 0) {
+        observation = vc_ftg_controller_checkpoint_observe(
+            NULL, 0u, checkpoint);
+        goto finish;
+    }
+    while (size < sizeof(bytes)) {
+        const SceSSize read_size = sceIoRead(
+            fd,
+            bytes + size,
+            (SceSize)(sizeof(bytes) - size));
+
+        if (read_size < 0) {
+            observation =
+                VC_FTG_CONTROLLER_CHECKPOINT_INVALID;
+            goto close;
+        }
+        if (read_size == 0) {
+            break;
+        }
+        size += (size_t)read_size;
+    }
+    observation = vc_ftg_controller_checkpoint_observe(
+        bytes, size, checkpoint);
+
+close:
+    if (sceIoClose(fd) < 0) {
+        observation = VC_FTG_CONTROLLER_CHECKPOINT_INVALID;
+    }
+
+finish:
+    memset(bytes, 0, sizeof(bytes));
+    return observation;
+}
+
+static bool write_checkpoint(
+    vc_ftg_controller_checkpoint *checkpoint)
+{
+    uint8_t expected[VC_FTG_CONTROLLER_CHECKPOINT_SIZE];
+    uint8_t observed[VC_FTG_CONTROLLER_CHECKPOINT_SIZE];
+    SceUID fd;
+    bool result = false;
+
+    memset(expected, 0, sizeof(expected));
+    memset(observed, 0, sizeof(observed));
+    if (!vc_ftg_controller_checkpoint_encode(
+            checkpoint, expected)) {
+        goto finish;
+    }
+    fd = sceIoOpen(
+        VC_FTG_CONTROLLER_CHECKPOINT_PATH,
+        SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC,
+        0666);
+    if (fd < 0) {
+        goto finish;
+    }
+    result = write_all(fd, expected, sizeof(expected));
+    if (sceIoClose(fd) < 0) {
+        result = false;
+    }
+    if (!result) {
+        goto finish;
+    }
+    result = read_exact_file(
+                 VC_FTG_CONTROLLER_CHECKPOINT_PATH,
+                 observed,
+                 sizeof(observed)) &&
+             memcmp(expected, observed, sizeof(expected)) == 0;
+
+finish:
+    memset(expected, 0, sizeof(expected));
+    memset(observed, 0, sizeof(observed));
+    return result;
+}
+
+static void init_controller_state(
+    controller_state *state,
+    uint64_t run_id,
+    uint64_t transaction_id,
+    uint64_t previous_run_id,
+    const char *phase_name,
+    const char *phase_result_path,
+    uint32_t phase_index,
+    uint32_t test_offset,
+    uint32_t expected_test_count,
+    bool result_cleared)
+{
+    memset(state, 0, sizeof(*state));
+    state->run_id = run_id;
+    state->transaction_id = transaction_id;
+    state->previous_run_id = previous_run_id;
+    state->phase_name = phase_name;
+    state->phase_result_path = phase_result_path;
+    state->phase_index = phase_index;
+    state->test_offset = test_offset;
+    state->expected_test_count = expected_test_count;
+    state->result_cleared = result_cleared;
+}
+
+static bool status_ready_without_target(
+    const vc_ftg_status_response_v2 *status)
+{
+    return status->base.version ==
+               VC_FTG_STATUS_VERSION_CURRENT &&
+           status->base.struct_size == sizeof(*status) &&
+           status->base.status == VC_FTG_RUNTIME_READY &&
+           status->base.capabilities ==
+               VC_FTG_CAPABILITY_FOREIGN_SEGMENT_READ &&
+           status->base.max_read == VC_FTG_MAX_READ &&
+           status->base.timeout_ms ==
+               VC_FTG_DEFAULT_TIMEOUT_MS &&
+           status->base.abi_flags == VC_FTG_ABI_FLAGS &&
+           status->base.target_state == VC_FTG_TARGET_NONE &&
+           status->target_create_match_count == 0u &&
+           status->target_create_authorized_count == 0u &&
+           status->start_revalidation_count == 0u &&
+           status->counter_saturation_flags == 0u;
+}
+
+static bool generation_profile_valid(
+    const vc_ftg_status_response_v2 *status,
+    const lifecycle_counts *baseline)
+{
+    lifecycle_counts current;
+
+    capture_lifecycle_counts(&current, status);
+    return status->counter_saturation_flags == 0u &&
+           vc_ftg_controller_generation_profile_valid(
+               &current, baseline);
+}
+
 static int wait_for_target(
     bool available,
     vc_ftg_status_response_v2 *status)
@@ -441,44 +659,58 @@ static int launch_target(void)
         VITACHEAT_FOREIGN_GATE_TARGET_TITLE_ID);
 }
 
-int main(void)
+static int finish_controller(controller_state *state)
+{
+    write_results(state);
+    sceClibPrintf(
+        "VCFG phase=%u summary passed=%u failed=%u path=%s\n",
+        state->phase_index,
+        state->passed,
+        state->failed,
+        VC_FTG_CONTROLLER_RESULT_PATH);
+    return state->failed == 0u &&
+                   state->result_count ==
+                       state->expected_test_count
+               ? 0
+               : 1;
+}
+
+static int run_phase_1(
+    uint64_t run_id,
+    bool result_cleared)
 {
     controller_state state;
     vc_ftg_status_response_v2 status;
     lifecycle_counts baseline_counts;
-    lifecycle_counts exit_counts;
+    vc_ftg_controller_checkpoint checkpoint;
     vc_ftg_open_response open_response;
-    vc_ftg_read_response read_response;
-    vc_ftg_fixture_layout layout;
-    uint64_t first_handle = 0u;
-    uint64_t second_handle = 0u;
-    SceInt64 run_time;
     int result;
 
-    memset(&state, 0, sizeof(state));
-    run_time = sceKernelGetSystemTimeWide();
-    if (run_time > 0) {
-        state.run_id = (uint64_t)run_time;
-    }
-    {
-        const bool result_cleared =
-            clear_artifact(VC_FTG_CONTROLLER_RESULT_PATH);
-
-        if (!record_result(
-                &state,
-                "clear-controller-result",
-                result_cleared,
-                result_cleared
-                    ? VC_FTG_RESULT_OK
-                    : VC_FTG_RESULT_PLATFORM_FAILURE)) {
-            goto finish;
-        }
+    init_controller_state(
+        &state,
+        run_id,
+        run_id,
+        0u,
+        "baseline-and-generation-1-launch",
+        VC_FTG_CONTROLLER_PHASE_1_RESULT_PATH,
+        1u,
+        0u,
+        8u,
+        result_cleared);
+    if (!record_result(
+            &state,
+            "clear-controller-result",
+            result_cleared,
+            result_cleared
+                ? VC_FTG_RESULT_OK
+                : VC_FTG_RESULT_PLATFORM_FAILURE)) {
+        goto finish;
     }
     if (!record_result(
             &state,
             "controller-run-identity",
-            state.run_id != 0u,
-            state.run_id != 0u
+            run_id != 0u,
+            run_id != 0u
                 ? VC_FTG_RESULT_OK
                 : VC_FTG_RESULT_PLATFORM_FAILURE)) {
         goto finish;
@@ -491,83 +723,125 @@ int main(void)
             &state,
             "status-ready",
             result == VC_FTG_RESULT_OK &&
-                status.base.version ==
-                    VC_FTG_STATUS_VERSION_CURRENT &&
-                status.base.struct_size == sizeof(status) &&
-                status.base.status == VC_FTG_RUNTIME_READY &&
-                status.base.capabilities ==
-                    VC_FTG_CAPABILITY_FOREIGN_SEGMENT_READ &&
-                status.base.max_read == VC_FTG_MAX_READ &&
-                status.base.timeout_ms ==
-                    VC_FTG_DEFAULT_TIMEOUT_MS &&
-                status.base.abi_flags == VC_FTG_ABI_FLAGS &&
-                status.base.target_state ==
-                    VC_FTG_TARGET_NONE &&
-                status.target_create_match_count == 0u &&
-                status.target_create_authorized_count == 0u &&
-                status.start_revalidation_count == 0u &&
-                status.counter_saturation_flags == 0u,
+                status_ready_without_target(&status),
             result)) {
         goto finish;
     }
-
     result = open_target(&open_response);
     if (!record_result(
             &state,
             "controller-before-target-unavailable",
-            status.base.target_state == VC_FTG_TARGET_NONE &&
-                result == VC_FTG_RESULT_TARGET_UNAVAILABLE,
+            result == VC_FTG_RESULT_TARGET_UNAVAILABLE,
             result)) {
         goto finish;
     }
     {
-        const bool layout_cleared =
-            clear_artifact(VC_FTG_LAYOUT_PATH);
+        const bool cleared = clear_artifact(VC_FTG_LAYOUT_PATH);
 
         if (!record_result(
                 &state,
                 "clear-fixture-layout",
-                layout_cleared,
-                layout_cleared
+                cleared,
+                cleared
                     ? VC_FTG_RESULT_OK
                     : VC_FTG_RESULT_PLATFORM_FAILURE)) {
             goto finish;
         }
     }
     {
-        const bool startup_cleared =
-            clear_artifact(VC_FTG_STARTUP_PATH);
+        const bool cleared = clear_artifact(VC_FTG_STARTUP_PATH);
 
         if (!record_result(
                 &state,
                 "clear-startup-stage",
-                startup_cleared,
-                startup_cleared
+                cleared,
+                cleared
                     ? VC_FTG_RESULT_OK
                     : VC_FTG_RESULT_PLATFORM_FAILURE)) {
             goto finish;
         }
     }
     {
-        const bool fixture_cleared =
+        const bool cleared =
             clear_artifact(VC_FTG_TARGET_RESULT_PATH);
 
         if (!record_result(
                 &state,
                 "clear-fixture-result",
-                fixture_cleared,
-                fixture_cleared
+                cleared,
+                cleared
                     ? VC_FTG_RESULT_OK
                     : VC_FTG_RESULT_PLATFORM_FAILURE)) {
             goto finish;
         }
     }
-    result = launch_target();
-    if (!record_result(
-            &state,
-            "launch-target",
-            result >= 0,
-            result)) {
+    {
+        const bool checkpoint_ready =
+            vc_ftg_controller_checkpoint_init_generation_1(
+                &checkpoint,
+                run_id,
+                run_id,
+                &baseline_counts) &&
+            write_checkpoint(&checkpoint);
+
+        result = checkpoint_ready
+                     ? launch_target()
+                     : VC_FTG_RESULT_PLATFORM_FAILURE;
+        if (result < 0) {
+            (void)clear_artifact(
+                VC_FTG_CONTROLLER_CHECKPOINT_PATH);
+        }
+        if (!record_result(
+                &state,
+                "launch-target",
+                checkpoint_ready && result >= 0,
+                result)) {
+            goto finish;
+        }
+        if (!vc_ftg_controller_checkpoint_commit_launch(
+                &checkpoint) ||
+            !write_checkpoint(&checkpoint)) {
+            (void)clear_artifact(
+                VC_FTG_CONTROLLER_CHECKPOINT_PATH);
+            fail_last_result(
+                &state, VC_FTG_RESULT_PLATFORM_FAILURE);
+            goto finish;
+        }
+    }
+
+finish:
+    memset(&checkpoint, 0, sizeof(checkpoint));
+    return finish_controller(&state);
+}
+
+static int run_phase_2(
+    uint64_t run_id,
+    uint64_t previous_run_id,
+    vc_ftg_controller_checkpoint *checkpoint,
+    bool result_cleared)
+{
+    controller_state state;
+    vc_ftg_status_response_v2 status;
+    lifecycle_counts exit_counts;
+    vc_ftg_open_response open_response;
+    vc_ftg_read_response read_response;
+    vc_ftg_fixture_layout layout;
+    uint64_t first_handle = 0u;
+    int result;
+
+    init_controller_state(
+        &state,
+        run_id,
+        checkpoint->transaction_id,
+        previous_run_id,
+        "generation-1-validation-and-generation-2-launch",
+        VC_FTG_CONTROLLER_PHASE_2_RESULT_PATH,
+        2u,
+        8u,
+        20u,
+        result_cleared);
+    if (!result_cleared) {
+        state.failed = 1u;
         goto finish;
     }
     result = wait_for_target(true, &status);
@@ -580,40 +854,21 @@ int main(void)
             result)) {
         goto finish;
     }
-    if (!record_result(
-            &state,
-            "generation-1-create-bound-diagnostics",
-            counter_advanced_by(
-                status.create_callback_count,
-                baseline_counts.create_callback_count,
-                1u) &&
-                counter_advanced_by(
-                    status.start_callback_count,
-                    baseline_counts.start_callback_count,
-                    19u) &&
-                counter_advanced_by(
-                    status.start_revalidation_count,
-                    baseline_counts.start_revalidation_count,
-                    19u) &&
-                counter_advanced_exactly(
-                    status.target_create_match_count,
-                    baseline_counts.target_create_match_count,
-                    1u) &&
-                counter_advanced_exactly(
-                    status.target_create_authorized_count,
-                    baseline_counts.target_create_authorized_count,
-                    1u) &&
-                status.counter_saturation_flags == 0u &&
-                status.last_lifecycle_event ==
-                    VC_FTG_PROCESS_STARTED &&
-                status.last_lifecycle_result ==
-                    VC_FTG_RESULT_OK &&
-                status.last_lifecycle_stage ==
-                    VC_FTG_DIAGNOSTIC_TARGET_START_REVALIDATED,
-            status.last_lifecycle_result)) {
-        goto finish;
-    }
+    {
+        const bool profile_valid =
+            generation_profile_valid(
+                &status, &checkpoint->baseline_counts);
 
+        if (!record_result(
+                &state,
+                "generation-1-create-bound-diagnostics",
+                profile_valid,
+                profile_valid
+                    ? VC_FTG_RESULT_OK
+                    : status.last_lifecycle_result)) {
+            goto finish;
+        }
+    }
     {
         const bool layout_ready = read_layout(&layout);
 
@@ -806,55 +1061,110 @@ int main(void)
             result)) {
         goto finish;
     }
-
     {
-        const bool layout_cleared =
+        const bool checkpoint_ready =
+            vc_ftg_controller_checkpoint_advance_generation_2(
+                checkpoint,
+                run_id,
+                first_handle,
+                &exit_counts);
+        const bool cleared =
+            checkpoint_ready &&
             clear_artifact(VC_FTG_LAYOUT_PATH);
 
         if (!record_result(
                 &state,
                 "clear-fixture-layout-before-relaunch",
-                layout_cleared,
-                layout_cleared
+                cleared,
+                cleared
                     ? VC_FTG_RESULT_OK
                     : VC_FTG_RESULT_PLATFORM_FAILURE)) {
             goto finish;
         }
     }
     {
-        const bool startup_cleared =
-            clear_artifact(VC_FTG_STARTUP_PATH);
+        const bool cleared = clear_artifact(VC_FTG_STARTUP_PATH);
 
         if (!record_result(
                 &state,
                 "clear-startup-stage-before-relaunch",
-                startup_cleared,
-                startup_cleared
+                cleared,
+                cleared
                     ? VC_FTG_RESULT_OK
                     : VC_FTG_RESULT_PLATFORM_FAILURE)) {
             goto finish;
         }
     }
     {
-        const bool fixture_cleared =
+        const bool cleared =
             clear_artifact(VC_FTG_TARGET_RESULT_PATH);
 
         if (!record_result(
                 &state,
                 "clear-fixture-result-before-relaunch",
-                fixture_cleared,
-                fixture_cleared
+                cleared,
+                cleared
                     ? VC_FTG_RESULT_OK
                     : VC_FTG_RESULT_PLATFORM_FAILURE)) {
             goto finish;
         }
     }
-    result = launch_target();
-    if (!record_result(
+    {
+        const bool checkpoint_pending =
+            write_checkpoint(checkpoint);
+
+        result = checkpoint_pending
+                     ? launch_target()
+                     : VC_FTG_RESULT_PLATFORM_FAILURE;
+        if (result < 0) {
+            (void)clear_artifact(
+                VC_FTG_CONTROLLER_CHECKPOINT_PATH);
+        }
+    }
+    if (record_result(
             &state,
             "relaunch-target",
             result >= 0,
-            result)) {
+            result) &&
+        (!vc_ftg_controller_checkpoint_commit_launch(
+             checkpoint) ||
+         !write_checkpoint(checkpoint))) {
+        (void)clear_artifact(
+            VC_FTG_CONTROLLER_CHECKPOINT_PATH);
+        fail_last_result(&state, VC_FTG_RESULT_PLATFORM_FAILURE);
+    }
+
+finish:
+    return finish_controller(&state);
+}
+
+static int run_phase_3(
+    uint64_t run_id,
+    uint64_t previous_run_id,
+    vc_ftg_controller_checkpoint *checkpoint,
+    bool result_cleared)
+{
+    controller_state state;
+    vc_ftg_status_response_v2 status;
+    vc_ftg_open_response open_response;
+    vc_ftg_read_response read_response;
+    vc_ftg_fixture_layout layout;
+    uint64_t second_handle = 0u;
+    int result;
+
+    init_controller_state(
+        &state,
+        run_id,
+        checkpoint->transaction_id,
+        previous_run_id,
+        "generation-2-validation",
+        VC_FTG_CONTROLLER_PHASE_3_RESULT_PATH,
+        3u,
+        28u,
+        7u,
+        result_cleared);
+    if (!result_cleared) {
+        state.failed = 1u;
         goto finish;
     }
     result = wait_for_target(true, &status);
@@ -867,38 +1177,20 @@ int main(void)
             result)) {
         goto finish;
     }
-    if (!record_result(
-            &state,
-            "generation-2-create-bound-diagnostics",
-            counter_advanced_by(
-                status.create_callback_count,
-                exit_counts.create_callback_count,
-                1u) &&
-                counter_advanced_by(
-                    status.start_callback_count,
-                    exit_counts.start_callback_count,
-                    19u) &&
-                counter_advanced_by(
-                    status.start_revalidation_count,
-                    exit_counts.start_revalidation_count,
-                    19u) &&
-                counter_advanced_exactly(
-                    status.target_create_match_count,
-                    exit_counts.target_create_match_count,
-                    1u) &&
-                counter_advanced_exactly(
-                    status.target_create_authorized_count,
-                    exit_counts.target_create_authorized_count,
-                    1u) &&
-                status.counter_saturation_flags == 0u &&
-                status.last_lifecycle_event ==
-                    VC_FTG_PROCESS_STARTED &&
-                status.last_lifecycle_result ==
-                    VC_FTG_RESULT_OK &&
-                status.last_lifecycle_stage ==
-                    VC_FTG_DIAGNOSTIC_TARGET_START_REVALIDATED,
-            status.last_lifecycle_result)) {
-        goto finish;
+    {
+        const bool profile_valid =
+            generation_profile_valid(
+                &status, &checkpoint->exit_counts);
+
+        if (!record_result(
+                &state,
+                "generation-2-create-bound-diagnostics",
+                profile_valid,
+                profile_valid
+                    ? VC_FTG_RESULT_OK
+                    : status.last_lifecycle_result)) {
+            goto finish;
+        }
     }
     {
         const bool layout_ready = read_layout(&layout);
@@ -914,7 +1206,7 @@ int main(void)
         }
     }
     result = read_target(
-        first_handle,
+        checkpoint->first_handle,
         layout.segment_index,
         layout.segment_offset,
         1u,
@@ -932,7 +1224,8 @@ int main(void)
             "open-relaunched-fixture",
             result == VC_FTG_RESULT_OK &&
                 open_response.handle != 0u &&
-                open_response.handle != first_handle,
+                open_response.handle !=
+                    checkpoint->first_handle,
             result)) {
         goto finish;
     }
@@ -954,6 +1247,7 @@ int main(void)
     {
         vc_ftg_close_request close_request;
         vc_ftg_close_response close_response;
+        bool checkpoint_cleared;
 
         memset(&close_request, 0, sizeof(close_request));
         memset(&close_response, 0, sizeof(close_response));
@@ -964,19 +1258,117 @@ int main(void)
         close_request.handle = second_handle;
         result = vc_ftg_decode_syscall_result(
             vcfgClose(&close_request, &close_response));
+        checkpoint_cleared =
+            result == VC_FTG_RESULT_OK &&
+            clear_artifact(VC_FTG_CONTROLLER_CHECKPOINT_PATH);
+        (void)record_result(
+            &state,
+            "close",
+            checkpoint_cleared,
+            checkpoint_cleared
+                ? result
+                : VC_FTG_RESULT_PLATFORM_FAILURE);
     }
-    (void)record_result(
-        &state,
-        "close",
-        result == VC_FTG_RESULT_OK,
-        result);
 
 finish:
-    write_results(&state);
-    sceClibPrintf(
-        "VCFG summary passed=%u failed=%u path=%s\n",
-        state.passed,
-        state.failed,
-        VC_FTG_CONTROLLER_RESULT_PATH);
-    return state.failed == 0u ? 0 : 1;
+    return finish_controller(&state);
+}
+
+int main(void)
+{
+    vc_ftg_controller_checkpoint checkpoint;
+    vc_ftg_status_response_v2 status;
+    SceInt64 run_time;
+    uint64_t run_id = 0u;
+    vc_ftg_controller_checkpoint_observation
+        checkpoint_observation;
+    uint64_t previous_run_id;
+    bool result_cleared;
+    int result;
+
+    memset(&checkpoint, 0, sizeof(checkpoint));
+    run_time = sceKernelGetSystemTimeWide();
+    if (run_time > 0) {
+        run_id = (uint64_t)run_time;
+    }
+    checkpoint_observation = read_checkpoint(&checkpoint);
+    if (checkpoint_observation ==
+        VC_FTG_CONTROLLER_CHECKPOINT_INVALID) {
+        sceClibPrintf(
+            "VCFG checkpoint rejected: malformed or partial\n");
+        return 1;
+    }
+    if (checkpoint_observation ==
+        VC_FTG_CONTROLLER_CHECKPOINT_VALID) {
+        if (run_id == 0u ||
+            run_id == checkpoint.previous_run_id) {
+            sceClibPrintf(
+                "VCFG checkpoint rejected: invalid run identity\n");
+            return 1;
+        }
+        if (checkpoint.phase ==
+            VC_FTG_CONTROLLER_PHASE_WAIT_GENERATION_1) {
+            previous_run_id = checkpoint.previous_run_id;
+            if (!vc_ftg_controller_checkpoint_begin_resume(
+                    &checkpoint, run_id) ||
+                !write_checkpoint(&checkpoint)) {
+                (void)clear_artifact(
+                    VC_FTG_CONTROLLER_CHECKPOINT_PATH);
+                sceClibPrintf(
+                    "VCFG checkpoint rejected: phase 2 claim failed\n");
+                return 1;
+            }
+            result_cleared =
+                clear_artifact(VC_FTG_CONTROLLER_RESULT_PATH) &&
+                clear_artifact(
+                    VC_FTG_CONTROLLER_PHASE_2_RESULT_PATH);
+            return run_phase_2(
+                run_id,
+                previous_run_id,
+                &checkpoint,
+                result_cleared);
+        }
+        if (checkpoint.phase ==
+            VC_FTG_CONTROLLER_PHASE_WAIT_GENERATION_2) {
+            previous_run_id = checkpoint.previous_run_id;
+            if (!vc_ftg_controller_checkpoint_begin_resume(
+                    &checkpoint, run_id) ||
+                !write_checkpoint(&checkpoint)) {
+                (void)clear_artifact(
+                    VC_FTG_CONTROLLER_CHECKPOINT_PATH);
+                sceClibPrintf(
+                    "VCFG checkpoint rejected: phase 3 claim failed\n");
+                return 1;
+            }
+            result_cleared =
+                clear_artifact(VC_FTG_CONTROLLER_RESULT_PATH) &&
+                clear_artifact(
+                    VC_FTG_CONTROLLER_PHASE_3_RESULT_PATH);
+            return run_phase_3(
+                run_id,
+                previous_run_id,
+                &checkpoint,
+                result_cleared);
+        }
+        sceClibPrintf(
+            "VCFG checkpoint rejected: invalid phase\n");
+        return 1;
+    }
+
+    result = get_status(&status);
+    if (result != VC_FTG_RESULT_OK ||
+        !status_ready_without_target(&status)) {
+        sceClibPrintf(
+            "VCFG new transaction rejected: status=%d state=%u\n",
+            result,
+            status.base.target_state);
+        return 1;
+    }
+    result_cleared =
+        clear_artifact(VC_FTG_CONTROLLER_RESULT_PATH) &&
+        clear_artifact(VC_FTG_CONTROLLER_PHASE_1_RESULT_PATH) &&
+        clear_artifact(VC_FTG_CONTROLLER_PHASE_2_RESULT_PATH) &&
+        clear_artifact(VC_FTG_CONTROLLER_PHASE_3_RESULT_PATH) &&
+        clear_artifact(VC_FTG_CONTROLLER_CHECKPOINT_PATH);
+    return run_phase_1(run_id, result_cleared);
 }

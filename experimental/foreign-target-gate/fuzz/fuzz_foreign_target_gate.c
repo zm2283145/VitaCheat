@@ -1,3 +1,4 @@
+#include "vitacheat/foreign_target_controller.h"
 #include "vitacheat/foreign_target_gate.h"
 #include "vitacheat/foreign_target_startup.h"
 
@@ -164,6 +165,106 @@ static uint64_t fuzz_u64(
         value |= (uint64_t)data[index] << (index * 8u);
     }
     return value;
+}
+
+static void fuzz_controller_protocol(
+    const uint8_t *data,
+    size_t size)
+{
+    vc_ftg_controller_checkpoint checkpoint;
+    vc_ftg_controller_checkpoint decoded;
+    vc_ftg_controller_counts baseline;
+    vc_ftg_controller_counts current;
+    uint8_t encoded[VC_FTG_CONTROLLER_CHECKPOINT_SIZE];
+    uint64_t transaction_id = fuzz_u64(data, size);
+
+    if (vc_ftg_controller_checkpoint_decode(
+            data, size, &decoded)) {
+        fuzz_check(vc_ftg_controller_checkpoint_encode(
+            &decoded, encoded));
+        fuzz_check(memcmp(
+            encoded, data, sizeof(encoded)) == 0);
+    }
+    if (size == 0u) {
+        fuzz_check(vc_ftg_controller_checkpoint_observe(
+                       data, size, &decoded) ==
+                   VC_FTG_CONTROLLER_CHECKPOINT_EMPTY);
+    } else if (vc_ftg_controller_checkpoint_observe(
+                   data, size, &decoded) ==
+               VC_FTG_CONTROLLER_CHECKPOINT_VALID) {
+        fuzz_check(size == VC_FTG_CONTROLLER_CHECKPOINT_SIZE);
+    }
+    memset(&baseline, 0, sizeof(baseline));
+    baseline.create_callback_count =
+        (uint32_t)fuzz_u64(data, size);
+    baseline.start_callback_count =
+        (uint32_t)fuzz_u64(data, size);
+    current = baseline;
+    if (current.create_callback_count != UINT32_MAX &&
+        current.start_callback_count <=
+            UINT32_MAX -
+                VC_FTG_CONTROLLER_MIN_REVALIDATIONS &&
+        current.target_create_match_count != UINT32_MAX &&
+        current.target_create_authorized_count != UINT32_MAX) {
+        ++current.create_callback_count;
+        ++current.target_create_match_count;
+        ++current.target_create_authorized_count;
+        current.start_callback_count +=
+            VC_FTG_CONTROLLER_MIN_REVALIDATIONS;
+        current.start_revalidation_count +=
+            VC_FTG_CONTROLLER_MIN_REVALIDATIONS;
+        fuzz_check(vc_ftg_controller_generation_profile_valid(
+            &current, &baseline));
+    }
+    if (transaction_id == 0u) {
+        transaction_id = 1u;
+    }
+    baseline.start_revalidation_count = 0u;
+    baseline.target_create_match_count = 0u;
+    baseline.target_create_authorized_count = 0u;
+    fuzz_check(
+        vc_ftg_controller_checkpoint_init_generation_1(
+            &checkpoint,
+            transaction_id,
+            transaction_id,
+            &baseline));
+    fuzz_check(vc_ftg_controller_checkpoint_encode(
+        &checkpoint, encoded));
+    fuzz_check(vc_ftg_controller_checkpoint_decode(
+        encoded, sizeof(encoded), &decoded));
+    fuzz_check(memcmp(
+        &checkpoint, &decoded, sizeof(decoded)) == 0);
+    fuzz_check(vc_ftg_controller_checkpoint_commit_launch(
+        &decoded));
+    fuzz_check(vc_ftg_controller_checkpoint_encode(
+        &decoded, encoded));
+    {
+        uint64_t resume_run_id =
+            transaction_id ^ UINT64_C(0x9e3779b97f4a7c15);
+
+        if (resume_run_id == 0u ||
+            resume_run_id == transaction_id) {
+            resume_run_id = transaction_id + 1u;
+            if (resume_run_id == 0u) {
+                resume_run_id = 1u;
+            }
+        }
+        fuzz_check(vc_ftg_controller_checkpoint_begin_resume(
+            &decoded, resume_run_id));
+        fuzz_check(vc_ftg_controller_checkpoint_encode(
+            &decoded, encoded));
+        fuzz_check(
+            !vc_ftg_controller_checkpoint_begin_resume(
+                &decoded, resume_run_id + 1u));
+    }
+    if (size > 1u) {
+        const size_t corrupt_index =
+            (size_t)data[1] % sizeof(encoded);
+
+        encoded[corrupt_index] ^= UINT8_C(1);
+        fuzz_check(!vc_ftg_controller_checkpoint_decode(
+            encoded, sizeof(encoded), &decoded));
+    }
 }
 
 static void fuzz_startup_protocol(
@@ -358,6 +459,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
         return 0;
     }
     fuzz_startup_protocol(data, size);
+    fuzz_controller_protocol(data, size);
     fuzz_initialize(
         &service, &config, &dependencies, &platform);
     for (index = 0u; index < size && index < 32u; ++index) {

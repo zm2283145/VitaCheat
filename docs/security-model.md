@@ -74,8 +74,9 @@ wrong-caller rejection with no returned handle. It contains no PID,
 generation, revision, module identity, fingerprint, or address and never
 reconciles or authorizes a process. Controller-side truncation plus explicit
 schema/build/run identity prevents preserved old output from becoming current
-evidence. Process-event timing, two-VPK suspend/resume residency, foreign-copy
-behavior, and unregister quiescence remain unproven.
+evidence. Hardware proved create-bound target authorization and controller
+process replacement, but no foreign-copy pass exists; restart-aware
+orchestration and unregister quiescence remain unproven.
 
 ## Authority model
 
@@ -348,17 +349,34 @@ does not satisfy any of those requirements.
   timeout, delay failure, handle leakage, or any other result exits before
   prompt-ready.
 - The controller result is truncated and verified empty before it publishes a
-  versioned build identity and nonzero run identity. Exact preserved bytes and
-  partial rewrites are waiting evidence, never current test results.
+  versioned build identity and nonzero run identity. Three phase documents must
+  form one exact transaction/run chain and concatenate to the canonical 35
+  tests. Exact preserved bytes and partial rewrites are waiting evidence,
+  never current test results.
+- The fixed 96-byte restart checkpoint is non-authoritative. It contains only
+  phase/run lineage, non-sensitive callback counters, restart count, and one
+  opaque old handle. Integrity detects accidental partial/corrupt state but is
+  not authentication. Malformed, same-run, skipped-phase, rollback, or
+  reserved-field state fails closed. Wait states are consumed durably before
+  phase work; launch-pending/running states block process relaunch, so an
+  incomplete phase cannot be retried. The checkpoint cannot select a PID,
+  address, generation, module, or segment or bypass caller-bound kernel
+  validation.
 - Append-only status v2 exposes only cumulative saturating lifecycle counts
-  and last event/result/stage. Hardware uses baseline deltas; raw event types
-  and all target identifiers remain non-authoritative and undisclosed.
+  and last event/result/stage. Hardware uses baseline deltas and accepts only
+  exactly one target-create authorization with either zero or at least 19
+  successful target start revalidations. The zero profile also requires zero
+  start callbacks; unmatched callbacks and partial 1-18 profiles fail closed.
+  Raw event types and all target identifiers remain non-authoritative and
+  undisclosed.
 - Stop unregisters the stored callback UID but always refuses runtime unload
   after a successful registration; reboot is mandatory because VitaSDK does
   not document callback drain semantics.
-- No device pass exists yet; both guarded attempts stopped before input/read,
-  and this create-bound correction has not been run. See
-  `docs/foreign-target-generation-gate.md` for the exact non-claims and manual
+- No foreign-read device pass exists yet. A guarded create-bound run proved one
+  exact target-create authorization, zero start callbacks/revalidations, and
+  controller process replacement, then stopped before open/read. The
+  restart-aware three-process protocol is host/cross-build validated only. See
+  `docs/foreign-target-generation-gate.md` for exact non-claims and the manual
   protocol.
 
 The first foreign-process write gate is reserved for the user's offline

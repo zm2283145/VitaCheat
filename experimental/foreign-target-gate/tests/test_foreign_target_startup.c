@@ -1,3 +1,4 @@
+#include "vitacheat/foreign_target_controller.h"
 #include "vitacheat/foreign_target_startup.h"
 
 #include <stdint.h>
@@ -636,6 +637,209 @@ static void test_stage_names(void)
               "invalid") == 0);
 }
 
+static vc_ftg_controller_counts controller_baseline(void)
+{
+    vc_ftg_controller_counts counts;
+
+    memset(&counts, 0, sizeof(counts));
+    counts.create_callback_count = 3u;
+    counts.start_callback_count = 7u;
+    return counts;
+}
+
+static vc_ftg_controller_counts controller_generation(
+    vc_ftg_controller_counts baseline,
+    uint32_t revalidations)
+{
+    ++baseline.create_callback_count;
+    baseline.start_callback_count += revalidations;
+    baseline.start_revalidation_count += revalidations;
+    ++baseline.target_create_match_count;
+    ++baseline.target_create_authorized_count;
+    return baseline;
+}
+
+static void test_controller_generation_profiles(void)
+{
+    const vc_ftg_controller_counts baseline =
+        controller_baseline();
+    vc_ftg_controller_counts current =
+        controller_generation(baseline, 0u);
+
+    CHECK(vc_ftg_controller_generation_profile_valid(
+        &current, &baseline));
+    current = controller_generation(
+        baseline, VC_FTG_CONTROLLER_MIN_REVALIDATIONS);
+    CHECK(vc_ftg_controller_generation_profile_valid(
+        &current, &baseline));
+    current = controller_generation(
+        baseline,
+        VC_FTG_CONTROLLER_MIN_REVALIDATIONS - 1u);
+    CHECK(!vc_ftg_controller_generation_profile_valid(
+        &current, &baseline));
+    current = controller_generation(baseline, 0u);
+    --current.create_callback_count;
+    CHECK(!vc_ftg_controller_generation_profile_valid(
+        &current, &baseline));
+    current = controller_generation(baseline, 0u);
+    ++current.target_create_match_count;
+    CHECK(!vc_ftg_controller_generation_profile_valid(
+        &current, &baseline));
+    current = controller_generation(baseline, 0u);
+    ++current.start_callback_count;
+    CHECK(!vc_ftg_controller_generation_profile_valid(
+        &current, &baseline));
+    current = controller_generation(
+        baseline, VC_FTG_CONTROLLER_MIN_REVALIDATIONS);
+    --current.start_callback_count;
+    CHECK(!vc_ftg_controller_generation_profile_valid(
+        &current, &baseline));
+}
+
+static void test_controller_checkpoint_round_trip(void)
+{
+    const vc_ftg_controller_counts baseline =
+        controller_baseline();
+    const vc_ftg_controller_counts exit_counts =
+        controller_generation(baseline, 0u);
+    vc_ftg_controller_checkpoint checkpoint;
+    vc_ftg_controller_checkpoint decoded;
+    uint8_t encoded[VC_FTG_CONTROLLER_CHECKPOINT_SIZE];
+    uint8_t corrupted[VC_FTG_CONTROLLER_CHECKPOINT_SIZE];
+    uint8_t oversized[VC_FTG_CONTROLLER_CHECKPOINT_SIZE + 1u];
+    size_t size;
+    size_t index;
+
+    CHECK(vc_ftg_controller_checkpoint_init_generation_1(
+        &checkpoint,
+        UINT64_C(0x100),
+        UINT64_C(0x100),
+        &baseline));
+    CHECK(checkpoint.phase ==
+          VC_FTG_CONTROLLER_PHASE_LAUNCH_GENERATION_1);
+    CHECK(vc_ftg_controller_checkpoint_encode(
+        &checkpoint, encoded));
+    CHECK(vc_ftg_controller_checkpoint_validate(
+        &checkpoint));
+    CHECK(vc_ftg_controller_checkpoint_decode(
+        encoded, sizeof(encoded), &decoded));
+    CHECK(memcmp(
+        &checkpoint, &decoded, sizeof(decoded)) == 0);
+    CHECK(vc_ftg_controller_checkpoint_observe(
+              NULL, 0u, &decoded) ==
+          VC_FTG_CONTROLLER_CHECKPOINT_EMPTY);
+    CHECK(vc_ftg_controller_checkpoint_observe(
+              encoded, sizeof(encoded), &decoded) ==
+          VC_FTG_CONTROLLER_CHECKPOINT_VALID);
+    CHECK(vc_ftg_controller_checkpoint_observe(
+              NULL, sizeof(encoded), &decoded) ==
+          VC_FTG_CONTROLLER_CHECKPOINT_INVALID);
+    memcpy(oversized, encoded, sizeof(encoded));
+    oversized[sizeof(encoded)] = 0u;
+    CHECK(vc_ftg_controller_checkpoint_observe(
+              oversized, sizeof(oversized), &decoded) ==
+          VC_FTG_CONTROLLER_CHECKPOINT_INVALID);
+    for (size = 0u; size < sizeof(encoded); ++size) {
+        CHECK(!vc_ftg_controller_checkpoint_decode(
+            encoded, size, &decoded));
+        if (size != 0u) {
+            CHECK(vc_ftg_controller_checkpoint_observe(
+                      encoded, size, &decoded) ==
+                  VC_FTG_CONTROLLER_CHECKPOINT_INVALID);
+        }
+    }
+    for (index = 0u; index < sizeof(encoded); ++index) {
+        memcpy(corrupted, encoded, sizeof(corrupted));
+        corrupted[index] ^= UINT8_C(1);
+        CHECK(!vc_ftg_controller_checkpoint_decode(
+            corrupted, sizeof(corrupted), &decoded));
+        CHECK(vc_ftg_controller_checkpoint_observe(
+                  corrupted, sizeof(corrupted), &decoded) ==
+              VC_FTG_CONTROLLER_CHECKPOINT_INVALID);
+    }
+    CHECK(!vc_ftg_controller_checkpoint_advance_generation_2(
+        &checkpoint,
+        UINT64_C(0x100),
+        UINT64_C(0x200),
+        &exit_counts));
+    CHECK(vc_ftg_controller_checkpoint_commit_launch(
+        &checkpoint));
+    CHECK(checkpoint.phase ==
+          VC_FTG_CONTROLLER_PHASE_WAIT_GENERATION_1);
+    CHECK(vc_ftg_controller_checkpoint_encode(
+        &checkpoint, encoded));
+    CHECK(!vc_ftg_controller_checkpoint_begin_resume(
+        &checkpoint, UINT64_C(0x100)));
+    CHECK(vc_ftg_controller_checkpoint_begin_resume(
+        &checkpoint, UINT64_C(0x101)));
+    CHECK(checkpoint.phase ==
+          VC_FTG_CONTROLLER_PHASE_RUN_GENERATION_1);
+    CHECK(checkpoint.previous_run_id == UINT64_C(0x101));
+    CHECK(checkpoint.restart_count == 2u);
+    CHECK(vc_ftg_controller_checkpoint_encode(
+        &checkpoint, encoded));
+    CHECK(!vc_ftg_controller_checkpoint_begin_resume(
+        &checkpoint, UINT64_C(0x102)));
+    CHECK(!vc_ftg_controller_checkpoint_commit_launch(
+        &checkpoint));
+    CHECK(!vc_ftg_controller_checkpoint_advance_generation_2(
+        &checkpoint,
+        UINT64_C(0x102),
+        0u,
+        &exit_counts));
+    CHECK(!vc_ftg_controller_checkpoint_advance_generation_2(
+        &checkpoint,
+        UINT64_C(0x101),
+        0u,
+        &exit_counts));
+    CHECK(vc_ftg_controller_checkpoint_advance_generation_2(
+        &checkpoint,
+        UINT64_C(0x101),
+        UINT64_C(0x200),
+        &exit_counts));
+    CHECK(checkpoint.phase ==
+          VC_FTG_CONTROLLER_PHASE_LAUNCH_GENERATION_2);
+    CHECK(vc_ftg_controller_checkpoint_encode(
+        &checkpoint, encoded));
+    CHECK(!vc_ftg_controller_checkpoint_begin_resume(
+        &checkpoint, UINT64_C(0x102)));
+    CHECK(vc_ftg_controller_checkpoint_commit_launch(
+        &checkpoint));
+    CHECK(vc_ftg_controller_checkpoint_encode(
+        &checkpoint, encoded));
+    CHECK(vc_ftg_controller_checkpoint_decode(
+        encoded, sizeof(encoded), &decoded));
+    CHECK(decoded.phase ==
+          VC_FTG_CONTROLLER_PHASE_WAIT_GENERATION_2);
+    CHECK(decoded.transaction_id == UINT64_C(0x100));
+    CHECK(decoded.previous_run_id == UINT64_C(0x101));
+    CHECK(decoded.first_handle == UINT64_C(0x200));
+    CHECK(decoded.restart_count == 2u);
+    CHECK(!vc_ftg_controller_checkpoint_begin_resume(
+        &decoded, UINT64_C(0x101)));
+    CHECK(!vc_ftg_controller_checkpoint_begin_resume(
+        &decoded, UINT64_C(0x100)));
+    CHECK(vc_ftg_controller_checkpoint_begin_resume(
+        &decoded, UINT64_C(0x102)));
+    CHECK(decoded.phase ==
+          VC_FTG_CONTROLLER_PHASE_RUN_GENERATION_2);
+    CHECK(decoded.previous_run_id == UINT64_C(0x102));
+    CHECK(decoded.restart_count == 3u);
+    CHECK(vc_ftg_controller_checkpoint_encode(
+        &decoded, encoded));
+    CHECK(vc_ftg_controller_checkpoint_validate(&decoded));
+    CHECK(!vc_ftg_controller_checkpoint_begin_resume(
+        &decoded, UINT64_C(0x103)));
+    CHECK(!vc_ftg_controller_checkpoint_commit_launch(
+        &decoded));
+    decoded.phase =
+        VC_FTG_CONTROLLER_PHASE_WAIT_GENERATION_1;
+    CHECK(!vc_ftg_controller_checkpoint_validate(&decoded));
+    decoded = checkpoint;
+    decoded.reserved0 = 1u;
+    CHECK(!vc_ftg_controller_checkpoint_validate(&decoded));
+}
+
 int main(void)
 {
     test_ordering_and_round_trip();
@@ -652,6 +856,8 @@ int main(void)
     test_prelaunch_cleanup_rejects_stale_record();
     test_no_input_timeout_remains_prompt_ready();
     test_stage_names();
+    test_controller_generation_profiles();
+    test_controller_checkpoint_round_trip();
 
     if (failures != 0) {
         fprintf(

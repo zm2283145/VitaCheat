@@ -11,6 +11,14 @@
     "ux0:data/vitacheat-foreign-target-fixture.json"
 #define VC_FTG_CONTROLLER_RESULT_PATH \
     "ux0:data/vitacheat-foreign-target-result.json"
+#define VC_FTG_CONTROLLER_PHASE_1_RESULT_PATH \
+    "ux0:data/vitacheat-foreign-target-result-phase-1.json"
+#define VC_FTG_CONTROLLER_PHASE_2_RESULT_PATH \
+    "ux0:data/vitacheat-foreign-target-result-phase-2.json"
+#define VC_FTG_CONTROLLER_PHASE_3_RESULT_PATH \
+    "ux0:data/vitacheat-foreign-target-result-phase-3.json"
+#define VC_FTG_CONTROLLER_CHECKPOINT_PATH \
+    "ux0:data/vitacheat-foreign-target-controller-state.bin"
 #define VC_FTG_LAYOUT_MAGIC UINT32_C(0x46544731)
 #define VC_FTG_LAYOUT_VERSION UINT32_C(1)
 

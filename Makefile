@@ -34,8 +34,10 @@ FOREIGN_GATE_TEST_BIN := $(BUILD_DIR)/vitacheat_foreign_target_gate_tests
 FOREIGN_STARTUP_TEST_BIN := $(BUILD_DIR)/vitacheat_foreign_target_startup_tests
 FOREIGN_GATE_FUZZ_SMOKE_BIN := $(BUILD_DIR)/vitacheat_foreign_target_gate_fuzz_smoke
 FOREIGN_GATE_SOURCES := experimental/foreign-target-gate/src/foreign_target_gate.c \
+	experimental/foreign-target-gate/src/foreign_target_controller.c \
 	experimental/foreign-target-gate/src/foreign_target_startup.c
 FOREIGN_GATE_HEADERS := experimental/foreign-target-gate/include/vitacheat/foreign_target_gate.h \
+	experimental/foreign-target-gate/include/vitacheat/foreign_target_controller.h \
 	experimental/foreign-target-gate/include/vitacheat/foreign_target_startup.h
 FOREIGN_GATE_CPPFLAGS := -Iexperimental/foreign-target-gate/include
 TEST_BINS := $(SEARCH_TEST_BIN) $(PSV_TEST_BIN) $(ACTIVATION_TEST_BIN) \
@@ -216,11 +218,14 @@ $(FOREIGN_GATE_TEST_BIN): $(FOREIGN_GATE_SOURCES) \
 		experimental/foreign-target-gate/tests/test_foreign_target_gate.c -o $@
 
 $(FOREIGN_STARTUP_TEST_BIN): \
+		experimental/foreign-target-gate/src/foreign_target_controller.c \
 		experimental/foreign-target-gate/src/foreign_target_startup.c \
 		experimental/foreign-target-gate/tests/test_foreign_target_startup.c \
+		experimental/foreign-target-gate/include/vitacheat/foreign_target_controller.h \
 		experimental/foreign-target-gate/include/vitacheat/foreign_target_startup.h \
 		| $(BUILD_DIR)
 	$(CC) $(FOREIGN_GATE_CPPFLAGS) $(CFLAGS) \
+		experimental/foreign-target-gate/src/foreign_target_controller.c \
 		experimental/foreign-target-gate/src/foreign_target_startup.c \
 		experimental/foreign-target-gate/tests/test_foreign_target_startup.c -o $@
 

@@ -1,4 +1,5 @@
 add_library(vitacheat_foreign_target_gate_core STATIC
+    src/foreign_target_controller.c
     src/foreign_target_gate.c
     src/foreign_target_startup.c
 )

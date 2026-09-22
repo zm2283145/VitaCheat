@@ -71,6 +71,7 @@ set(expected_controller_symbols
     sceAppMgrDestroyAppByName
     sceAppMgrLaunchAppByUri
     sceClibMemcmp
+    sceClibMemcpy
     sceClibMemset
     sceClibPrintf
     sceClibSnprintf

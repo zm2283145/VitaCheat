@@ -400,17 +400,20 @@ callbacks that overlap an unlocked adapter operation atomically trip a
 permanent fail-closed latch, and a raced response is scrubbed before the
 blocked caller returns.
 
-The first Vita attempt stopped before input/read at an early target-start
-observability gap. A diagnostic rerun reached prompt-ready while the old
-start-bound registry was unavailable. Offline retail-3.65 analysis proved one
-create followed by at least 19 synchronous starts before user-thread
-activation, so the corrected model authorizes at create and revalidates on
-every start. The source-owned target's 80-byte diagnostic record and bounded
-two-second wrong-caller probe cannot create lifecycle authority. Controller
-status v2 records non-sensitive counter deltas needed to falsify callback
-reachability/classification. Unregister quiescence, two-homebrew
-suspend/resume residency, and foreign-target copying remain explicit hardware
-questions.
+Early Vita attempts stopped before input/read at target-start observability
+boundaries. A later guarded run proved one exact create-bound target
+authorization, zero start callbacks/revalidations, and controller process
+replacement after the target transition. The corrected model still authorizes
+only at create and treats any same-PID starts as idempotent revalidation; the
+controller accepts only the observed zero-revalidation profile or the retained
+19-or-more firmware-analysis profile. A 96-byte non-authoritative checkpoint
+splits the canonical 35 tests across three replacement controller processes.
+It carries only phase/run lineage, safe counter snapshots, restart count, and
+one opaque old handle. The source-owned target's 80-byte diagnostic record,
+checkpoint, and bounded wrong-caller probe cannot create lifecycle authority.
+Controller status v2 records non-sensitive counter deltas needed to falsify
+callback reachability/classification. Restart-aware foreign-target copying and
+unregister quiescence remain explicit hardware questions.
 A pre-registration target receives no generation and cannot be opened; an
 out-of-order later start fails closed. Runtime unload is not a recovery path.
 See `docs/foreign-target-generation-gate.md`.
@@ -438,11 +441,12 @@ rather than one general memory service:
 None of these capabilities is represented by the production v1 operation or
 capability mask; unknown operations and bits fail closed. The ordinary Vita
 self-test remains buffer-only. The same-process and foreign-target gates use
-separate disposable namespaces. The former has a passing 3.65 record; the
-latter is only host/cross-build validated and exists to test event-derived
-foreign identity against two source-owned VPKs. Retail-title access, kernel
-hooks, user-plugin injection, and overlay rendering remain later milestones
-with their own threat models and evidence.
+separate disposable namespaces. The former has a passing 3.65 record. The
+latter has hardware evidence for create-bound authorization and process
+replacement but no foreign-read pass; its restart-aware revision is
+host/cross-build validated. Retail-title access, kernel hooks, user-plugin
+injection, and overlay rendering remain later milestones with their own threat
+models and evidence.
 
 ## Future native Quick Menu launcher and injected in-game menu
 

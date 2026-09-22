@@ -197,6 +197,7 @@ target_link_options(VitaCheatFtTarget PRIVATE
 
 add_executable(VitaCheatFtController
     controller.c
+    "${FOREIGN_GATE_ROOT}/src/foreign_target_controller.c"
 )
 add_dependencies(VitaCheatFtController foreign-gate-stubs)
 target_include_directories(VitaCheatFtController

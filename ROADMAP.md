@@ -98,14 +98,16 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
       address from user mode.
 - [ ] Run the guarded `VCFT00001`/`VCFC00001` foreign-target gate on owned
       retail 3.65 hardware and retain the exact result, artifact hashes,
-      process-event ordering, suspend/resume residency, and restoration proof.
+      process-event ordering, replacement-process orchestration, and
+      restoration proof.
       The first attempt stopped before target observability. The diagnostic
       rerun reached prompt-ready but the old start-bound registry returned
       `TARGET_UNAVAILABLE`; no input/read occurred. Offline retail-3.65
-      evidence proved one create followed by at least 19 starts before user
-      entry. Generation now binds at create, starts revalidate idempotently,
-      and append-only counter deltas await a separately authorized falsification
-      run without substituting user-mode evidence for kernel authority.
+      evidence predicted one create followed by at least 19 starts. A later
+      run proved exact create-bound authorization with zero starts and proved
+      that the controller is replaced, not resumed. The restart-aware
+      three-process protocol preserves kernel authority and now awaits a
+      separately authorized foreign-read run.
 - [ ] Design, review, and hardware-gate strong foreign-process attestation and
       a production target-read adapter before capturing any foreign bytes.
 - [x] Reconcile trusted catalog addresses into verified module/segment-relative

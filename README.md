@@ -200,15 +200,16 @@ segment-relative read of at most 64 bytes. The Vita kit produces two VPKs and
 one SKPRX with build-failing import/export allowlists and no automatic
 deployment. A first guarded hardware attempt stopped before input or any
 foreign read when no target artifact became observable; restoration completed
-byte-exact. A diagnostic rerun then reached a valid source-owned prompt-ready record, but
-the old start-bound registry was unavailable. Offline retail-3.65 analysis
-proved a unique create callback followed by at least 19 synchronous starts
-before user-thread activation. The corrected model binds generation and exact
-module identity at create, treats starts as idempotent revalidation, and emits
-append-only non-sensitive lifecycle counters. It has not run on hardware.
-Callback reachability/classification, two-application suspend/resume
-residency, foreign copying, and unload remain unproven, and no userspace marker
-or retail/production authority is claimed.
+byte-exact. A later create-bound run reached prompt-ready, used one bounded
+input, and proved one exact target-create authorization with zero start
+callbacks/revalidations. It also proved that the target transition starts a
+new controller process rather than resuming the old one, so the run stopped
+before open/read. The current restart-aware controller splits the canonical 35
+tests across three processes using a fixed non-authoritative checkpoint; zero
+or 19-or-more successful start revalidations are the only accepted evidence
+profiles. The new protocol is host-tested and Vita-cross-built but not yet
+hardware-tested. Foreign copying and unload remain unproven, and no userspace
+marker or retail/production authority is claimed.
 
 The first Vita-facing build is the deliberately unprivileged and now
 hardware-tested
@@ -356,13 +357,11 @@ and
 The diagnostic 3.65 run proved that its prior `OpenSelf` failure was an invalid
 kernel-UID/process-UID equality assumption; the isolated gate now binds both
 UIDs internally. The corrected run device-validated the bounded source-owned
-same-process path. The separate source-owned foreign-target generation gate is
-host- and cross-build validated; two guarded attempts stopped before
-input/read. The second reached a valid prompt-ready diagnostic record while
-the event registry was still unavailable at the target's immediate probe. A
-bounded readiness retry and fresh controller-result identity now await a
-separately authorized rerun. This remains neither a retail-game nor a
-production reader.
+same-process path. The separate source-owned foreign-target generation gate has hardware evidence
+for create-bound authorization and controller process replacement but no
+foreign-read pass. Its restart-aware three-process result/checkpoint protocol
+is host- and cross-build validated and awaits a separately authorized rerun.
+This remains neither a retail-game nor a production reader.
 
 ## Relationship to VitaDebugger
 
