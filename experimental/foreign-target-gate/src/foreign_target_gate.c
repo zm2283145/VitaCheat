@@ -191,6 +191,91 @@ static void vc_ftg_trip_fail_closed(
         memory_order_relaxed);
 }
 
+static void vc_ftg_increment_counter(
+    atomic_uint *counter,
+    atomic_uint *saturation_flags,
+    uint32_t saturation_flag)
+{
+    unsigned int value = atomic_load_explicit(
+        counter, memory_order_relaxed);
+
+    for (;;) {
+        if (value == UINT_MAX) {
+            (void)atomic_fetch_or_explicit(
+                saturation_flags,
+                saturation_flag,
+                memory_order_relaxed);
+            return;
+        }
+        if (atomic_compare_exchange_weak_explicit(
+                counter,
+                &value,
+                value + 1u,
+                memory_order_relaxed,
+                memory_order_relaxed)) {
+            return;
+        }
+    }
+}
+
+static void vc_ftg_record_lifecycle(
+    vc_ftg_service *service,
+    vc_ftg_process_event event,
+    vc_ftg_result result,
+    vc_ftg_diagnostic_stage stage)
+{
+    atomic_store_explicit(
+        &service->last_lifecycle_event,
+        (unsigned int)event,
+        memory_order_relaxed);
+    atomic_store_explicit(
+        &service->last_lifecycle_result,
+        (int)result,
+        memory_order_relaxed);
+    atomic_store_explicit(
+        &service->last_lifecycle_stage,
+        (unsigned int)stage,
+        memory_order_release);
+}
+
+static void vc_ftg_reset_lifecycle_diagnostics(
+    vc_ftg_service *service)
+{
+    atomic_store_explicit(
+        &service->create_callback_count, 0u,
+        memory_order_relaxed);
+    atomic_store_explicit(
+        &service->start_callback_count, 0u,
+        memory_order_relaxed);
+    atomic_store_explicit(
+        &service->start_revalidation_count, 0u,
+        memory_order_relaxed);
+    atomic_store_explicit(
+        &service->ignored_non_target_count, 0u,
+        memory_order_relaxed);
+    atomic_store_explicit(
+        &service->target_create_match_count, 0u,
+        memory_order_relaxed);
+    atomic_store_explicit(
+        &service->target_create_authorized_count, 0u,
+        memory_order_relaxed);
+    atomic_store_explicit(
+        &service->counter_saturation_flags, 0u,
+        memory_order_relaxed);
+    atomic_store_explicit(
+        &service->last_lifecycle_event,
+        0u,
+        memory_order_relaxed);
+    atomic_store_explicit(
+        &service->last_lifecycle_result,
+        VC_FTG_RESULT_OK,
+        memory_order_relaxed);
+    atomic_store_explicit(
+        &service->last_lifecycle_stage,
+        VC_FTG_DIAGNOSTIC_NONE,
+        memory_order_release);
+}
+
 static bool vc_ftg_is_fail_closed(
     const vc_ftg_service *service)
 {
@@ -378,6 +463,26 @@ static vc_ftg_result vc_ftg_copy_response(
 
 static vc_ftg_result vc_ftg_validate_status_request(
     const vc_ftg_status_request *request)
+{
+    if (request->version != VC_FTG_STATUS_VERSION_1 &&
+        request->version != VC_FTG_STATUS_VERSION_2) {
+        return VC_FTG_RESULT_INVALID_VERSION;
+    }
+    if (request->struct_size != sizeof(*request)) {
+        return VC_FTG_RESULT_INVALID_SIZE;
+    }
+    if (request->capabilities != 0u) {
+        return VC_FTG_RESULT_CAPABILITY_MISMATCH;
+    }
+    if (request->reserved0 != 0u ||
+        request->reserved1 != 0u) {
+        return VC_FTG_RESULT_RESERVED_NOT_ZERO;
+    }
+    return VC_FTG_RESULT_OK;
+}
+
+static vc_ftg_result vc_ftg_validate_open_request(
+    const vc_ftg_open_request *request)
 {
     if (request->version != VC_FTG_ABI_VERSION) {
         return VC_FTG_RESULT_INVALID_VERSION;
@@ -630,6 +735,20 @@ vc_ftg_result vc_ftg_service_init(
     atomic_init(
         &service->fail_closed_stage,
         VC_FTG_DIAGNOSTIC_NONE);
+    atomic_init(&service->create_callback_count, 0u);
+    atomic_init(&service->start_callback_count, 0u);
+    atomic_init(&service->start_revalidation_count, 0u);
+    atomic_init(&service->ignored_non_target_count, 0u);
+    atomic_init(&service->target_create_match_count, 0u);
+    atomic_init(&service->target_create_authorized_count, 0u);
+    atomic_init(&service->counter_saturation_flags, 0u);
+    atomic_init(&service->last_lifecycle_event, 0u);
+    atomic_init(
+        &service->last_lifecycle_result,
+        VC_FTG_RESULT_OK);
+    atomic_init(
+        &service->last_lifecycle_stage,
+        VC_FTG_DIAGNOSTIC_NONE);
     service->next_generation = first_generation;
     service->next_revision = first_revision;
     service->next_handle = first_handle;
@@ -650,6 +769,7 @@ vc_ftg_result vc_ftg_service_start(vc_ftg_service *service)
     }
     vc_ftg_scrub_registry(service);
     vc_ftg_scrub_session(service);
+    vc_ftg_reset_lifecycle_diagnostics(service);
     service->running = true;
     service->last_result = service->config.enabled
                                ? VC_FTG_RESULT_OK
@@ -673,6 +793,7 @@ vc_ftg_result vc_ftg_service_set_registered(
     }
     service->registered = registered;
     if (registered) {
+        service->runtime_unload_blocked = true;
         service->diagnostic_stage =
             service->config.foreign_lifecycle_enabled
                 ? VC_FTG_DIAGNOSTIC_REGISTERED
@@ -706,18 +827,22 @@ vc_ftg_result vc_ftg_service_stop(vc_ftg_service *service)
     return VC_FTG_RESULT_OK;
 }
 
-vc_ftg_result vc_ftg_service_process_event(
+vc_ftg_result vc_ftg_service_process_event_with_type(
     vc_ftg_service *service,
     vc_ftg_process_event event,
-    uint32_t process_id)
+    uint32_t process_id,
+    uint32_t event_type)
 {
     uint8_t title_id[VC_FTG_TITLE_ID_CAPACITY];
     vc_ftg_module_snapshot module;
     vc_ftg_result result = VC_FTG_RESULT_OK;
+    vc_ftg_diagnostic_stage lifecycle_stage =
+        VC_FTG_DIAGNOSTIC_NONE;
     bool is_target = false;
     bool need_title = true;
     bool need_module = false;
 
+    (void)event_type;
     vc_ftg_wipe(title_id, sizeof(title_id));
     vc_ftg_wipe(&module, sizeof(module));
     if (!vc_ftg_service_valid(service) ||
@@ -727,12 +852,28 @@ vc_ftg_result vc_ftg_service_process_event(
         event > VC_FTG_PROCESS_KILLED) {
         return VC_FTG_RESULT_INVALID_ARGUMENT;
     }
+    if (event == VC_FTG_PROCESS_CREATED) {
+        vc_ftg_increment_counter(
+            &service->create_callback_count,
+            &service->counter_saturation_flags,
+            VC_FTG_COUNTER_SAT_CREATE_CALLBACK);
+    } else if (event == VC_FTG_PROCESS_STARTED) {
+        vc_ftg_increment_counter(
+            &service->start_callback_count,
+            &service->counter_saturation_flags,
+            VC_FTG_COUNTER_SAT_START_CALLBACK);
+    }
     if (atomic_exchange_explicit(
             &service->callback_active,
             1u,
             memory_order_acquire) != 0u) {
+        lifecycle_stage =
+            VC_FTG_DIAGNOSTIC_CALLBACK_CONTENTION;
         vc_ftg_trip_fail_closed(
-            service, VC_FTG_DIAGNOSTIC_CALLBACK_CONTENTION);
+            service, lifecycle_stage);
+        vc_ftg_record_lifecycle(
+            service, event, VC_FTG_RESULT_BUSY,
+            lifecycle_stage);
         return VC_FTG_RESULT_BUSY;
     }
     if (atomic_load_explicit(
@@ -742,8 +883,13 @@ vc_ftg_result vc_ftg_service_process_event(
             &service->transaction_busy,
             1u,
             memory_order_acquire) != 0u) {
+        lifecycle_stage =
+            VC_FTG_DIAGNOSTIC_CALLBACK_CONTENTION;
         vc_ftg_trip_fail_closed(
-            service, VC_FTG_DIAGNOSTIC_CALLBACK_CONTENTION);
+            service, lifecycle_stage);
+        vc_ftg_record_lifecycle(
+            service, event, VC_FTG_RESULT_BUSY,
+            lifecycle_stage);
         atomic_store_explicit(
             &service->callback_active,
             0u,
@@ -755,9 +901,10 @@ vc_ftg_result vc_ftg_service_process_event(
         goto finish;
     }
     if (!service->registered) {
+        lifecycle_stage =
+            VC_FTG_DIAGNOSTIC_INITIAL_RECONCILIATION_UNPROVEN;
         result = vc_ftg_fail_event(
-            service,
-            VC_FTG_DIAGNOSTIC_INITIAL_RECONCILIATION_UNPROVEN);
+            service, lifecycle_stage);
         goto finish;
     }
     if ((event == VC_FTG_PROCESS_EXITED ||
@@ -766,7 +913,9 @@ vc_ftg_result vc_ftg_service_process_event(
         service->registry.process_id == process_id) {
         need_title = false;
     }
-    need_module = event == VC_FTG_PROCESS_STARTED;
+    need_module =
+        event == VC_FTG_PROCESS_CREATED ||
+        event == VC_FTG_PROCESS_STARTED;
     if (need_title || need_module) {
         vc_ftg_leave(service);
         if (need_title &&
@@ -795,99 +944,140 @@ vc_ftg_result vc_ftg_service_process_event(
         is_target = true;
     }
     if (result != VC_FTG_RESULT_OK) {
+        lifecycle_stage =
+            result == VC_FTG_RESULT_MODULE_UNAVAILABLE
+                ? VC_FTG_DIAGNOSTIC_MODULE_QUERY
+                : VC_FTG_DIAGNOSTIC_TITLE_QUERY;
         if (service->registry.process_id == process_id ||
             event == VC_FTG_PROCESS_CREATED ||
             event == VC_FTG_PROCESS_STARTED) {
             result = vc_ftg_fail_event(
-                service,
-                result == VC_FTG_RESULT_MODULE_UNAVAILABLE
-                    ? VC_FTG_DIAGNOSTIC_MODULE_QUERY
-                    : VC_FTG_DIAGNOSTIC_TITLE_QUERY);
+                service, lifecycle_stage);
         }
         goto finish;
     }
     if (!is_target) {
+        if (service->registry.state != VC_FTG_TARGET_NONE &&
+            service->registry.process_id == process_id) {
+            lifecycle_stage =
+                VC_FTG_DIAGNOSTIC_TARGET_IDENTITY_MISMATCH;
+            result = vc_ftg_fail_event(
+                service, lifecycle_stage);
+            goto finish;
+        }
+        vc_ftg_increment_counter(
+            &service->ignored_non_target_count,
+            &service->counter_saturation_flags,
+            VC_FTG_COUNTER_SAT_IGNORED_NON_TARGET);
+        lifecycle_stage =
+            VC_FTG_DIAGNOSTIC_NON_TARGET_IGNORED;
         goto finish;
     }
     switch (event) {
     case VC_FTG_PROCESS_CREATED:
+        vc_ftg_increment_counter(
+            &service->target_create_match_count,
+            &service->counter_saturation_flags,
+            VC_FTG_COUNTER_SAT_TARGET_CREATE_MATCH);
         if (service->registry.state != VC_FTG_TARGET_NONE) {
+            lifecycle_stage =
+                VC_FTG_DIAGNOSTIC_DUPLICATE_EVENT;
             result = vc_ftg_fail_event(
-                service, VC_FTG_DIAGNOSTIC_DUPLICATE_EVENT);
-            break;
-        }
-        result = vc_ftg_advance_revision(
-            service, &service->registry.lifecycle_revision);
-        if (result != VC_FTG_RESULT_OK) {
-            result = vc_ftg_fail_event(
-                service,
-                VC_FTG_DIAGNOSTIC_REVISION_EXHAUSTED);
-            break;
-        }
-        service->registry.process_id = process_id;
-        service->registry.state = VC_FTG_TARGET_CREATED;
-        service->diagnostic_stage =
-            VC_FTG_DIAGNOSTIC_TARGET_CREATED;
-        service->last_result = VC_FTG_RESULT_OK;
-        break;
-    case VC_FTG_PROCESS_STARTED:
-        if (service->registry.state !=
-                VC_FTG_TARGET_CREATED ||
-            service->registry.process_id != process_id) {
-            result = vc_ftg_fail_event(
-                service,
-                service->registry.process_id == process_id
-                    ? VC_FTG_DIAGNOSTIC_DUPLICATE_EVENT
-                    : VC_FTG_DIAGNOSTIC_OUT_OF_ORDER_EVENT);
+                service, lifecycle_stage);
             break;
         }
         if (vc_ftg_validate_module(
                 service, process_id, &module) !=
             VC_FTG_RESULT_OK) {
+            lifecycle_stage =
+                VC_FTG_DIAGNOSTIC_MODULE_MISMATCH;
             result = vc_ftg_fail_event(
-                service, VC_FTG_DIAGNOSTIC_MODULE_MISMATCH);
+                service, lifecycle_stage);
             break;
         }
         result = vc_ftg_assign_generation(
             service, &service->registry.generation);
         if (result != VC_FTG_RESULT_OK) {
+            lifecycle_stage =
+                VC_FTG_DIAGNOSTIC_GENERATION_EXHAUSTED;
             result = vc_ftg_fail_event(
-                service,
-                VC_FTG_DIAGNOSTIC_GENERATION_EXHAUSTED);
+                service, lifecycle_stage);
             break;
         }
         result = vc_ftg_advance_revision(
             service, &service->registry.lifecycle_revision);
         if (result != VC_FTG_RESULT_OK) {
+            lifecycle_stage =
+                VC_FTG_DIAGNOSTIC_REVISION_EXHAUSTED;
             result = vc_ftg_fail_event(
-                service,
-                VC_FTG_DIAGNOSTIC_REVISION_EXHAUSTED);
+                service, lifecycle_stage);
             break;
         }
         vc_ftg_copy_bytes(
             &service->registry.module,
             &module,
             sizeof(service->registry.module));
+        service->registry.process_id = process_id;
         service->registry.state = VC_FTG_TARGET_STARTED;
         service->diagnostic_stage =
             VC_FTG_DIAGNOSTIC_TARGET_STARTED;
         service->last_result = VC_FTG_RESULT_OK;
+        vc_ftg_increment_counter(
+            &service->target_create_authorized_count,
+            &service->counter_saturation_flags,
+            VC_FTG_COUNTER_SAT_TARGET_CREATE_AUTHORIZED);
+        lifecycle_stage =
+            VC_FTG_DIAGNOSTIC_TARGET_CREATE_BOUND;
+        break;
+    case VC_FTG_PROCESS_STARTED:
+        if (service->registry.state !=
+                VC_FTG_TARGET_STARTED ||
+            service->registry.process_id != process_id) {
+            lifecycle_stage =
+                VC_FTG_DIAGNOSTIC_OUT_OF_ORDER_EVENT;
+            result = vc_ftg_fail_event(
+                service, lifecycle_stage);
+            break;
+        }
+        if (vc_ftg_validate_module(
+                service, process_id, &module) !=
+                VC_FTG_RESULT_OK ||
+            !vc_ftg_module_equal(
+                &service->registry.module, &module)) {
+            lifecycle_stage =
+                VC_FTG_DIAGNOSTIC_MODULE_MISMATCH;
+            result = vc_ftg_fail_event(
+                service, lifecycle_stage);
+            break;
+        }
+        service->diagnostic_stage =
+            VC_FTG_DIAGNOSTIC_TARGET_STARTED;
+        service->last_result = VC_FTG_RESULT_OK;
+        vc_ftg_increment_counter(
+            &service->start_revalidation_count,
+            &service->counter_saturation_flags,
+            VC_FTG_COUNTER_SAT_START_REVALIDATION);
+        lifecycle_stage =
+            VC_FTG_DIAGNOSTIC_TARGET_START_REVALIDATED;
         break;
     case VC_FTG_PROCESS_EXITED:
     case VC_FTG_PROCESS_KILLED:
         if (service->registry.state == VC_FTG_TARGET_NONE ||
             service->registry.process_id != process_id) {
+            lifecycle_stage =
+                VC_FTG_DIAGNOSTIC_OUT_OF_ORDER_EVENT;
             result = vc_ftg_fail_event(
-                service, VC_FTG_DIAGNOSTIC_OUT_OF_ORDER_EVENT);
+                service, lifecycle_stage);
             break;
         }
         if (vc_ftg_advance_revision(
                 service,
                 &service->registry.lifecycle_revision) !=
             VC_FTG_RESULT_OK) {
+            lifecycle_stage =
+                VC_FTG_DIAGNOSTIC_REVISION_EXHAUSTED;
             result = vc_ftg_fail_event(
-                service,
-                VC_FTG_DIAGNOSTIC_REVISION_EXHAUSTED);
+                service, lifecycle_stage);
             break;
         }
         vc_ftg_scrub_session(service);
@@ -897,14 +1087,21 @@ vc_ftg_result vc_ftg_service_process_event(
                 ? VC_FTG_DIAGNOSTIC_TARGET_EXITED
                 : VC_FTG_DIAGNOSTIC_TARGET_KILLED;
         service->last_result = VC_FTG_RESULT_OK;
+        lifecycle_stage =
+            (vc_ftg_diagnostic_stage)
+                service->diagnostic_stage;
         break;
     default:
+        lifecycle_stage =
+            VC_FTG_DIAGNOSTIC_OUT_OF_ORDER_EVENT;
         result = vc_ftg_fail_event(
-            service, VC_FTG_DIAGNOSTIC_OUT_OF_ORDER_EVENT);
+            service, lifecycle_stage);
         break;
     }
 
 finish:
+    vc_ftg_record_lifecycle(
+        service, event, result, lifecycle_stage);
     vc_ftg_wipe(title_id, sizeof(title_id));
     vc_ftg_wipe(&module, sizeof(module));
     vc_ftg_leave(service);
@@ -913,15 +1110,41 @@ finish:
     return result;
 }
 
+vc_ftg_result vc_ftg_service_process_event(
+    vc_ftg_service *service,
+    vc_ftg_process_event event,
+    uint32_t process_id)
+{
+    return vc_ftg_service_process_event_with_type(
+        service, event, process_id, 0u);
+}
+
+bool vc_ftg_service_runtime_unload_allowed(
+    const vc_ftg_service *service)
+{
+    return vc_ftg_service_valid(service) &&
+           !service->runtime_unload_blocked &&
+           atomic_load_explicit(
+               &service->transaction_busy,
+               memory_order_acquire) == 0u &&
+           atomic_load_explicit(
+               &service->operation_active,
+               memory_order_acquire) == 0u &&
+           atomic_load_explicit(
+               &service->callback_active,
+               memory_order_acquire) == 0u;
+}
+
 vc_ftg_result vc_ftg_service_get_status(
     vc_ftg_service *service,
     const void *request_user,
     void *response_user)
 {
     vc_ftg_status_request request;
-    vc_ftg_status_response response;
+    vc_ftg_status_response_v2 response;
     uint8_t caller_title[VC_FTG_TITLE_ID_CAPACITY];
     uint32_t caller_process_id = 0u;
+    size_t response_size = sizeof(response.base);
     vc_ftg_result result;
 
     vc_ftg_wipe(&request, sizeof(request));
@@ -959,42 +1182,89 @@ vc_ftg_result vc_ftg_service_get_status(
     vc_ftg_operation_lock(service);
     vc_ftg_consume_fail_closed(service);
     if (result == VC_FTG_RESULT_OK) {
-        response.version = VC_FTG_ABI_VERSION;
-        response.struct_size = sizeof(response);
-        response.capabilities =
+        response_size =
+            request.version == VC_FTG_STATUS_VERSION_2
+                ? sizeof(response)
+                : sizeof(response.base);
+        response.base.version = request.version;
+        response.base.struct_size = (uint16_t)response_size;
+        response.base.capabilities =
             vc_ftg_full_gate_available(service)
                 ? VC_FTG_CAPABILITY_FOREIGN_SEGMENT_READ
                 : 0u;
-        response.max_read = VC_FTG_MAX_READ;
-        response.timeout_ms = VC_FTG_DEFAULT_TIMEOUT_MS;
-        response.abi_flags = VC_FTG_ABI_FLAGS;
-        response.diagnostic_stage =
+        response.base.max_read = VC_FTG_MAX_READ;
+        response.base.timeout_ms = VC_FTG_DEFAULT_TIMEOUT_MS;
+        response.base.abi_flags =
+            request.version == VC_FTG_STATUS_VERSION_2
+                ? VC_FTG_ABI_FLAGS
+                : VC_FTG_ABI_FLAGS_V1;
+        response.base.diagnostic_stage =
             service->diagnostic_stage;
-        response.last_result = service->last_result;
-        response.target_state = service->registry.state;
+        response.base.last_result = service->last_result;
+        response.base.target_state = service->registry.state;
+        response.create_callback_count =
+            atomic_load_explicit(
+                &service->create_callback_count,
+                memory_order_relaxed);
+        response.start_callback_count =
+            atomic_load_explicit(
+                &service->start_callback_count,
+                memory_order_relaxed);
+        response.start_revalidation_count =
+            atomic_load_explicit(
+                &service->start_revalidation_count,
+                memory_order_relaxed);
+        response.ignored_non_target_count =
+            atomic_load_explicit(
+                &service->ignored_non_target_count,
+                memory_order_relaxed);
+        response.target_create_match_count =
+            atomic_load_explicit(
+                &service->target_create_match_count,
+                memory_order_relaxed);
+        response.target_create_authorized_count =
+            atomic_load_explicit(
+                &service->target_create_authorized_count,
+                memory_order_relaxed);
+        response.counter_saturation_flags =
+            atomic_load_explicit(
+                &service->counter_saturation_flags,
+                memory_order_relaxed);
+        response.last_lifecycle_event =
+            atomic_load_explicit(
+                &service->last_lifecycle_event,
+                memory_order_relaxed);
+        response.last_lifecycle_result =
+            atomic_load_explicit(
+                &service->last_lifecycle_result,
+                memory_order_relaxed);
+        response.last_lifecycle_stage =
+            atomic_load_explicit(
+                &service->last_lifecycle_stage,
+                memory_order_acquire);
         if (!service->config.enabled) {
-            response.status = VC_FTG_RUNTIME_DISABLED;
+            response.base.status = VC_FTG_RUNTIME_DISABLED;
         } else if (!service->running) {
-            response.status = VC_FTG_RUNTIME_STOPPED;
+            response.base.status = VC_FTG_RUNTIME_STOPPED;
         } else if (!service->config.api_available ||
                    !service->registered) {
-            response.status =
+            response.base.status =
                 VC_FTG_RUNTIME_API_MISMATCH;
         } else if (vc_ftg_is_fail_closed(service)) {
-            response.status =
+            response.base.status =
                 VC_FTG_RUNTIME_FAIL_CLOSED;
         } else if (!service->config.foreign_lifecycle_enabled) {
-            response.status =
+            response.base.status =
                 VC_FTG_RUNTIME_DIAGNOSTIC_ONLY;
         } else if (service->session.active) {
-            response.status =
+            response.base.status =
                 VC_FTG_RUNTIME_SESSION_OPEN;
         } else if (service->registry.state ==
                    VC_FTG_TARGET_STARTED) {
-            response.status =
+            response.base.status =
                 VC_FTG_RUNTIME_TARGET_AVAILABLE;
         } else {
-            response.status = VC_FTG_RUNTIME_READY;
+            response.base.status = VC_FTG_RUNTIME_READY;
         }
         vc_ftg_leave(service);
         result = vc_ftg_copy_response(
@@ -1002,7 +1272,7 @@ vc_ftg_result vc_ftg_service_get_status(
             caller_process_id,
             response_user,
             &response,
-            sizeof(response));
+            response_size);
         vc_ftg_operation_lock(service);
     }
     if (result != VC_FTG_RESULT_OK) {
@@ -1069,7 +1339,7 @@ vc_ftg_result vc_ftg_service_open_exact_fixture(
             sizeof(request));
     }
     if (result == VC_FTG_RESULT_OK) {
-        result = vc_ftg_validate_status_request(&request);
+        result = vc_ftg_validate_open_request(&request);
     }
     if (result == VC_FTG_RESULT_OK &&
         (!vc_ftg_get_time(service, &now_us) ||

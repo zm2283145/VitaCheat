@@ -11,6 +11,9 @@ extern "C" {
 #endif
 
 #define VC_FTG_ABI_VERSION UINT16_C(1)
+#define VC_FTG_STATUS_VERSION_1 UINT16_C(1)
+#define VC_FTG_STATUS_VERSION_2 UINT16_C(2)
+#define VC_FTG_STATUS_VERSION_CURRENT VC_FTG_STATUS_VERSION_2
 #define VC_FTG_TITLE_ID_LENGTH UINT32_C(9)
 #define VC_FTG_TITLE_ID_CAPACITY UINT32_C(16)
 #define VC_FTG_MODULE_NAME_CAPACITY UINT32_C(28)
@@ -30,13 +33,25 @@ extern "C" {
 #define VC_FTG_ABI_FLAG_EXACT_MODULE_BOUND UINT32_C(0x00000008)
 #define VC_FTG_ABI_FLAG_FIXED_BOUNCE UINT32_C(0x00000010)
 #define VC_FTG_ABI_FLAG_NO_RAW_PID_OR_ADDRESS UINT32_C(0x00000020)
-#define VC_FTG_ABI_FLAGS                                             \
+#define VC_FTG_ABI_FLAG_CREATE_GENERATION_BOUND UINT32_C(0x00000040)
+#define VC_FTG_ABI_FLAGS_V1                                          \
     (VC_FTG_ABI_FLAG_CALLER_PID_DERIVED |                            \
      VC_FTG_ABI_FLAG_EVENT_GENERATION_BOUND |                        \
      VC_FTG_ABI_FLAG_EXACT_TITLES_BOUND |                            \
      VC_FTG_ABI_FLAG_EXACT_MODULE_BOUND |                            \
      VC_FTG_ABI_FLAG_FIXED_BOUNCE |                                  \
      VC_FTG_ABI_FLAG_NO_RAW_PID_OR_ADDRESS)
+#define VC_FTG_ABI_FLAGS                                             \
+    (VC_FTG_ABI_FLAGS_V1 |                                           \
+     VC_FTG_ABI_FLAG_CREATE_GENERATION_BOUND)
+
+#define VC_FTG_COUNTER_SAT_CREATE_CALLBACK UINT32_C(0x00000001)
+#define VC_FTG_COUNTER_SAT_START_CALLBACK UINT32_C(0x00000002)
+#define VC_FTG_COUNTER_SAT_START_REVALIDATION UINT32_C(0x00000004)
+#define VC_FTG_COUNTER_SAT_IGNORED_NON_TARGET UINT32_C(0x00000008)
+#define VC_FTG_COUNTER_SAT_TARGET_CREATE_MATCH UINT32_C(0x00000010)
+#define VC_FTG_COUNTER_SAT_TARGET_CREATE_AUTHORIZED UINT32_C(0x00000020)
+#define VC_FTG_COUNTER_SAT_KNOWN_MASK UINT32_C(0x0000003F)
 
 typedef enum vc_ftg_result {
     VC_FTG_RESULT_OK = 0,
@@ -130,7 +145,11 @@ typedef enum vc_ftg_diagnostic_stage {
     VC_FTG_DIAGNOSTIC_REVISION_EXHAUSTED = 15,
     VC_FTG_DIAGNOSTIC_REGISTRATION_FAILED = 16,
     VC_FTG_DIAGNOSTIC_UNREGISTER_FAILED = 17,
-    VC_FTG_DIAGNOSTIC_STAGE_COUNT = 18
+    VC_FTG_DIAGNOSTIC_TARGET_CREATE_BOUND = 18,
+    VC_FTG_DIAGNOSTIC_TARGET_START_REVALIDATED = 19,
+    VC_FTG_DIAGNOSTIC_TARGET_IDENTITY_MISMATCH = 20,
+    VC_FTG_DIAGNOSTIC_NON_TARGET_IGNORED = 21,
+    VC_FTG_DIAGNOSTIC_STAGE_COUNT = 22
 } vc_ftg_diagnostic_stage;
 
 typedef struct vc_ftg_status_request {
@@ -156,6 +175,22 @@ typedef struct vc_ftg_status_response {
     uint32_t reserved1;
     uint32_t reserved2;
 } vc_ftg_status_response;
+
+typedef struct vc_ftg_status_response_v2 {
+    vc_ftg_status_response base;
+    uint32_t create_callback_count;
+    uint32_t start_callback_count;
+    uint32_t start_revalidation_count;
+    uint32_t ignored_non_target_count;
+    uint32_t target_create_match_count;
+    uint32_t target_create_authorized_count;
+    uint32_t counter_saturation_flags;
+    uint32_t last_lifecycle_event;
+    int32_t last_lifecycle_result;
+    uint32_t last_lifecycle_stage;
+    uint32_t reserved0;
+    uint32_t reserved1;
+} vc_ftg_status_response_v2;
 
 typedef vc_ftg_status_request vc_ftg_open_request;
 
@@ -211,6 +246,11 @@ _Static_assert(sizeof(vc_ftg_status_request) == 16,
                "foreign-target status request ABI changed");
 _Static_assert(sizeof(vc_ftg_status_response) == 48,
                "foreign-target status response ABI changed");
+_Static_assert(sizeof(vc_ftg_status_response_v2) == 96,
+               "foreign-target status v2 response ABI changed");
+_Static_assert(offsetof(vc_ftg_status_response_v2,
+                       create_callback_count) == 48,
+               "foreign-target status v2 append offset changed");
 _Static_assert(sizeof(vc_ftg_open_response) == 32,
                "foreign-target open response ABI changed");
 _Static_assert(sizeof(vc_ftg_session_request) == 24,
@@ -320,6 +360,16 @@ typedef struct vc_ftg_service {
     atomic_uint operation_active;
     atomic_uint callback_active;
     atomic_uint fail_closed_stage;
+    atomic_uint create_callback_count;
+    atomic_uint start_callback_count;
+    atomic_uint start_revalidation_count;
+    atomic_uint ignored_non_target_count;
+    atomic_uint target_create_match_count;
+    atomic_uint target_create_authorized_count;
+    atomic_uint counter_saturation_flags;
+    atomic_uint last_lifecycle_event;
+    atomic_int last_lifecycle_result;
+    atomic_uint last_lifecycle_stage;
     uint64_t next_generation;
     uint64_t next_revision;
     uint64_t next_handle;
@@ -331,6 +381,7 @@ typedef struct vc_ftg_service {
     bool handle_exhausted;
     bool generation_exhausted;
     bool revision_exhausted;
+    bool runtime_unload_blocked;
 } vc_ftg_service;
 
 vc_ftg_result vc_ftg_service_init(
@@ -352,6 +403,15 @@ vc_ftg_result vc_ftg_service_process_event(
     vc_ftg_service *service,
     vc_ftg_process_event event,
     uint32_t process_id);
+
+vc_ftg_result vc_ftg_service_process_event_with_type(
+    vc_ftg_service *service,
+    vc_ftg_process_event event,
+    uint32_t process_id,
+    uint32_t event_type);
+
+bool vc_ftg_service_runtime_unload_allowed(
+    const vc_ftg_service *service);
 
 vc_ftg_result vc_ftg_service_get_status(
     vc_ftg_service *service,
@@ -375,7 +435,7 @@ vc_ftg_result vc_ftg_service_close(
 
 int vcfgGetStatus(
     const vc_ftg_status_request *request,
-    vc_ftg_status_response *response);
+    void *response);
 int vcfgOpenExactFixture(
     const vc_ftg_open_request *request,
     vc_ftg_open_response *response);

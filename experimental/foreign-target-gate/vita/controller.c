@@ -11,7 +11,6 @@
 #include <stdint.h>
 
 #define memcmp sceClibMemcmp
-#define memcpy sceClibMemcpy
 #define memset sceClibMemset
 #define snprintf sceClibSnprintf
 
@@ -19,7 +18,8 @@
 #error "The foreign-target controller requires a target title ID"
 #endif
 
-#define VC_FTG_MAX_TEST_RESULTS 32u
+#define VC_FTG_MAX_TEST_RESULTS 40u
+#define VC_FTG_MAX_DIAGNOSTIC_SNAPSHOTS 4u
 
 static const uint8_t g_expected_sentinel[VC_FTG_MAX_READ] =
     VC_FTG_SENTINEL_BYTES;
@@ -30,9 +30,34 @@ typedef struct test_result {
     bool passed;
 } test_result;
 
+typedef struct diagnostic_snapshot {
+    const char *name;
+    uint32_t create_callback_count;
+    uint32_t start_callback_count;
+    uint32_t start_revalidation_count;
+    uint32_t ignored_non_target_count;
+    uint32_t target_create_match_count;
+    uint32_t target_create_authorized_count;
+    uint32_t counter_saturation_flags;
+    uint32_t last_lifecycle_event;
+    int32_t last_lifecycle_result;
+    uint32_t last_lifecycle_stage;
+} diagnostic_snapshot;
+
+typedef struct lifecycle_counts {
+    uint32_t create_callback_count;
+    uint32_t start_callback_count;
+    uint32_t start_revalidation_count;
+    uint32_t target_create_match_count;
+    uint32_t target_create_authorized_count;
+} lifecycle_counts;
+
 typedef struct controller_state {
     test_result results[VC_FTG_MAX_TEST_RESULTS];
+    diagnostic_snapshot
+        diagnostics[VC_FTG_MAX_DIAGNOSTIC_SNAPSHOTS];
     uint32_t result_count;
+    uint32_t diagnostic_count;
     uint32_t passed;
     uint32_t failed;
     uint64_t run_id;
@@ -60,7 +85,7 @@ static bool write_all(
 
 static void write_results(const controller_state *state)
 {
-    char line[320];
+    char line[640];
     SceUID fd;
     uint32_t index;
     int size;
@@ -108,6 +133,41 @@ static void write_results(const controller_state *state)
         line,
         sizeof(line),
         "\n  ],\n"
+        "  \"lifecycle_diagnostics\":[\n");
+    if (size > 0 && (size_t)size < sizeof(line)) {
+        (void)write_all(fd, line, (size_t)size);
+    }
+    for (index = 0u; index < state->diagnostic_count; ++index) {
+        const diagnostic_snapshot *snapshot =
+            &state->diagnostics[index];
+        size = snprintf(
+            line,
+            sizeof(line),
+            "%s    {\"name\":\"%s\",\"create_callbacks\":%u,"
+            "\"start_callbacks\":%u,\"start_revalidations\":%u,"
+            "\"ignored_non_target\":%u,\"target_create_matches\":%u,"
+            "\"target_create_authorized\":%u,\"saturation_flags\":%u,"
+            "\"last_event\":%u,\"last_result\":%d,\"last_stage\":%u}",
+            index == 0u ? "" : ",\n",
+            snapshot->name,
+            snapshot->create_callback_count,
+            snapshot->start_callback_count,
+            snapshot->start_revalidation_count,
+            snapshot->ignored_non_target_count,
+            snapshot->target_create_match_count,
+            snapshot->target_create_authorized_count,
+            snapshot->counter_saturation_flags,
+            snapshot->last_lifecycle_event,
+            snapshot->last_lifecycle_result,
+            snapshot->last_lifecycle_stage);
+        if (size > 0 && (size_t)size < sizeof(line)) {
+            (void)write_all(fd, line, (size_t)size);
+        }
+    }
+    size = snprintf(
+        line,
+        sizeof(line),
+        "\n  ],\n"
         "  \"summary\":{\"passed\":%u,\"failed\":%u,"
         "\"result\":\"%s\"}\n"
         "}\n",
@@ -118,6 +178,74 @@ static void write_results(const controller_state *state)
         (void)write_all(fd, line, (size_t)size);
     }
     (void)sceIoClose(fd);
+}
+
+static void record_diagnostic_snapshot(
+    controller_state *state,
+    const char *name,
+    const vc_ftg_status_response_v2 *status)
+{
+    if (state->diagnostic_count <
+        VC_FTG_MAX_DIAGNOSTIC_SNAPSHOTS) {
+        diagnostic_snapshot *snapshot =
+            &state->diagnostics[state->diagnostic_count++];
+
+        snapshot->name = name;
+        snapshot->create_callback_count =
+            status->create_callback_count;
+        snapshot->start_callback_count =
+            status->start_callback_count;
+        snapshot->start_revalidation_count =
+            status->start_revalidation_count;
+        snapshot->ignored_non_target_count =
+            status->ignored_non_target_count;
+        snapshot->target_create_match_count =
+            status->target_create_match_count;
+        snapshot->target_create_authorized_count =
+            status->target_create_authorized_count;
+        snapshot->counter_saturation_flags =
+            status->counter_saturation_flags;
+        snapshot->last_lifecycle_event =
+            status->last_lifecycle_event;
+        snapshot->last_lifecycle_result =
+            status->last_lifecycle_result;
+        snapshot->last_lifecycle_stage =
+            status->last_lifecycle_stage;
+    }
+}
+
+static void capture_lifecycle_counts(
+    lifecycle_counts *counts,
+    const vc_ftg_status_response_v2 *status)
+{
+    counts->create_callback_count =
+        status->create_callback_count;
+    counts->start_callback_count =
+        status->start_callback_count;
+    counts->start_revalidation_count =
+        status->start_revalidation_count;
+    counts->target_create_match_count =
+        status->target_create_match_count;
+    counts->target_create_authorized_count =
+        status->target_create_authorized_count;
+}
+
+static bool counter_advanced_by(
+    uint32_t current,
+    uint32_t baseline,
+    uint32_t minimum)
+{
+    return current >= baseline &&
+           current - baseline >= minimum;
+}
+
+static bool counter_advanced_exactly(
+    uint32_t current,
+    uint32_t baseline,
+    uint32_t expected)
+{
+    return current >= baseline &&
+           current - baseline == expected;
 }
 
 static bool record_result(
@@ -154,11 +282,19 @@ static void init_status_request(
     vc_ftg_status_request *request)
 {
     memset(request, 0, sizeof(*request));
+    request->version = VC_FTG_STATUS_VERSION_CURRENT;
+    request->struct_size = sizeof(*request);
+}
+
+static void init_open_request(
+    vc_ftg_open_request *request)
+{
+    memset(request, 0, sizeof(*request));
     request->version = VC_FTG_ABI_VERSION;
     request->struct_size = sizeof(*request);
 }
 
-static int get_status(vc_ftg_status_response *response)
+static int get_status(vc_ftg_status_response_v2 *response)
 {
     vc_ftg_status_request request;
 
@@ -172,7 +308,7 @@ static int open_target(vc_ftg_open_response *response)
 {
     vc_ftg_open_request request;
 
-    init_status_request(&request);
+    init_open_request(&request);
     memset(response, 0, sizeof(*response));
     return vc_ftg_decode_syscall_result(
         vcfgOpenExactFixture(&request, response));
@@ -278,7 +414,7 @@ static bool clear_artifact(const char *path)
 
 static int wait_for_target(
     bool available,
-    vc_ftg_status_response *status)
+    vc_ftg_status_response_v2 *status)
 {
     unsigned int attempt;
     int result = VC_FTG_RESULT_TARGET_UNAVAILABLE;
@@ -288,7 +424,7 @@ static int wait_for_target(
         if (result != VC_FTG_RESULT_OK) {
             return result;
         }
-        if ((status->target_state ==
+        if ((status->base.target_state ==
              VC_FTG_TARGET_STARTED) == available) {
             return VC_FTG_RESULT_OK;
         }
@@ -308,7 +444,9 @@ static int launch_target(void)
 int main(void)
 {
     controller_state state;
-    vc_ftg_status_response status;
+    vc_ftg_status_response_v2 status;
+    lifecycle_counts baseline_counts;
+    lifecycle_counts exit_counts;
     vc_ftg_open_response open_response;
     vc_ftg_read_response read_response;
     vc_ftg_fixture_layout layout;
@@ -346,20 +484,29 @@ int main(void)
         goto finish;
     }
     result = get_status(&status);
+    record_diagnostic_snapshot(
+        &state, "pre-target-baseline", &status);
+    capture_lifecycle_counts(&baseline_counts, &status);
     if (!record_result(
             &state,
             "status-ready",
             result == VC_FTG_RESULT_OK &&
-                status.version == VC_FTG_ABI_VERSION &&
-                status.struct_size == sizeof(status) &&
-                status.status == VC_FTG_RUNTIME_READY &&
-                status.capabilities ==
+                status.base.version ==
+                    VC_FTG_STATUS_VERSION_CURRENT &&
+                status.base.struct_size == sizeof(status) &&
+                status.base.status == VC_FTG_RUNTIME_READY &&
+                status.base.capabilities ==
                     VC_FTG_CAPABILITY_FOREIGN_SEGMENT_READ &&
-                status.max_read == VC_FTG_MAX_READ &&
-                status.timeout_ms ==
+                status.base.max_read == VC_FTG_MAX_READ &&
+                status.base.timeout_ms ==
                     VC_FTG_DEFAULT_TIMEOUT_MS &&
-                status.abi_flags == VC_FTG_ABI_FLAGS &&
-                status.target_state == VC_FTG_TARGET_NONE,
+                status.base.abi_flags == VC_FTG_ABI_FLAGS &&
+                status.base.target_state ==
+                    VC_FTG_TARGET_NONE &&
+                status.target_create_match_count == 0u &&
+                status.target_create_authorized_count == 0u &&
+                status.start_revalidation_count == 0u &&
+                status.counter_saturation_flags == 0u,
             result)) {
         goto finish;
     }
@@ -368,7 +515,7 @@ int main(void)
     if (!record_result(
             &state,
             "controller-before-target-unavailable",
-            status.target_state == VC_FTG_TARGET_NONE &&
+            status.base.target_state == VC_FTG_TARGET_NONE &&
                 result == VC_FTG_RESULT_TARGET_UNAVAILABLE,
             result)) {
         goto finish;
@@ -424,11 +571,46 @@ int main(void)
         goto finish;
     }
     result = wait_for_target(true, &status);
+    record_diagnostic_snapshot(
+        &state, "generation-1-target-ready", &status);
     if (!record_result(
             &state,
             "target-start-observed",
             result == VC_FTG_RESULT_OK,
             result)) {
+        goto finish;
+    }
+    if (!record_result(
+            &state,
+            "generation-1-create-bound-diagnostics",
+            counter_advanced_by(
+                status.create_callback_count,
+                baseline_counts.create_callback_count,
+                1u) &&
+                counter_advanced_by(
+                    status.start_callback_count,
+                    baseline_counts.start_callback_count,
+                    19u) &&
+                counter_advanced_by(
+                    status.start_revalidation_count,
+                    baseline_counts.start_revalidation_count,
+                    19u) &&
+                counter_advanced_exactly(
+                    status.target_create_match_count,
+                    baseline_counts.target_create_match_count,
+                    1u) &&
+                counter_advanced_exactly(
+                    status.target_create_authorized_count,
+                    baseline_counts.target_create_authorized_count,
+                    1u) &&
+                status.counter_saturation_flags == 0u &&
+                status.last_lifecycle_event ==
+                    VC_FTG_PROCESS_STARTED &&
+                status.last_lifecycle_result ==
+                    VC_FTG_RESULT_OK &&
+                status.last_lifecycle_stage ==
+                    VC_FTG_DIAGNOSTIC_TARGET_START_REVALIDATED,
+            status.last_lifecycle_result)) {
         goto finish;
     }
 
@@ -588,11 +770,27 @@ int main(void)
         goto finish;
     }
     result = wait_for_target(false, &status);
+    record_diagnostic_snapshot(
+        &state, "generation-1-target-exited", &status);
+    capture_lifecycle_counts(&exit_counts, &status);
     if (!record_result(
             &state,
             "target-exit-observed",
             result == VC_FTG_RESULT_OK,
             result)) {
+        goto finish;
+    }
+    if (!record_result(
+            &state,
+            "generation-1-exit-diagnostics",
+            status.counter_saturation_flags == 0u &&
+                status.last_lifecycle_event ==
+                    VC_FTG_PROCESS_EXITED &&
+                status.last_lifecycle_result ==
+                    VC_FTG_RESULT_OK &&
+                status.last_lifecycle_stage ==
+                    VC_FTG_DIAGNOSTIC_TARGET_EXITED,
+            status.last_lifecycle_result)) {
         goto finish;
     }
     result = read_target(
@@ -660,11 +858,46 @@ int main(void)
         goto finish;
     }
     result = wait_for_target(true, &status);
+    record_diagnostic_snapshot(
+        &state, "generation-2-target-ready", &status);
     if (!record_result(
             &state,
             "target-relaunch-observed",
             result == VC_FTG_RESULT_OK,
             result)) {
+        goto finish;
+    }
+    if (!record_result(
+            &state,
+            "generation-2-create-bound-diagnostics",
+            counter_advanced_by(
+                status.create_callback_count,
+                exit_counts.create_callback_count,
+                1u) &&
+                counter_advanced_by(
+                    status.start_callback_count,
+                    exit_counts.start_callback_count,
+                    19u) &&
+                counter_advanced_by(
+                    status.start_revalidation_count,
+                    exit_counts.start_revalidation_count,
+                    19u) &&
+                counter_advanced_exactly(
+                    status.target_create_match_count,
+                    exit_counts.target_create_match_count,
+                    1u) &&
+                counter_advanced_exactly(
+                    status.target_create_authorized_count,
+                    exit_counts.target_create_authorized_count,
+                    1u) &&
+                status.counter_saturation_flags == 0u &&
+                status.last_lifecycle_event ==
+                    VC_FTG_PROCESS_STARTED &&
+                status.last_lifecycle_result ==
+                    VC_FTG_RESULT_OK &&
+                status.last_lifecycle_stage ==
+                    VC_FTG_DIAGNOSTIC_TARGET_START_REVALIDATED,
+            status.last_lifecycle_result)) {
         goto finish;
     }
     {

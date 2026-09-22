@@ -22,15 +22,23 @@ byte-exact.
 
 `OpenExactFixture` checks the event registry for `TARGET_STARTED` before it
 derives or validates the caller title. The rerun therefore proves only that
-the registry had not reached `TARGET_STARTED` at that target instant. It does
-not prove that the start callback never arrives: the installed VitaSDK header
-does not define callback timing relative to the first user instruction in
-`main`. The host runner also saw the intentionally preserved prior result
-before the corrected controller truncated it and incorrectly treated its old
-test order as a failure. The current revision corrects both races without
-changing kernel authority: the fixture performs a bounded target-only
-readiness probe, and controller results carry a fresh run identity after
-verified truncation. It has not been run on hardware.
+the old registry had not authorized the target at that instant. Private,
+offline analysis of locally retained retail-3.65 firmware artifacts then
+established the missing semantics: one create callback occurs after exact
+title/main-module availability, followed by at least 19 synchronous start
+phase callbacks before user-thread activation. The old implementation treated
+the first start as unique authority and the second as a duplicate, so it did
+not model retail 3.65 correctly. The sanitized provenance SHA-256 is
+`6ccf57e1d288558a9bc96de08abcb66078f6b82866165fd944c4c35bf51f6f6e`;
+no firmware binary, private report, or disassembly is part of this repository.
+
+The current correction binds one generation and the complete exact module
+snapshot at create. Every same-PID start is an idempotent exact-title/module
+revalidation that cannot advance generation or revision. Raw `event_type` is
+ignored for authority. The target's two-second wrong-caller probe remains only
+a bounded scheduling guard. The controller result freshness race is also fixed:
+preserved prior bytes are ignored until verified truncation or a complete new
+run identity. This corrected lifecycle model has not been run on hardware.
 
 The layer is based exactly on remote `native-read-hardware-gate` commit
 `1233c08656a1c219d8de0fd7dde1257986ed3a97`. Its device-tested parent gate is
@@ -137,17 +145,17 @@ record can create, advance, or replace kernel lifecycle authority.
 Before any test, the controller truncates
 `ux0:data/vitacheat-foreign-target-result.json` and verifies a zero-byte
 readback. Every subsequent non-atomic JSON rewrite uses schema
-`vitacheat.foreign-target-gate.result.v2`, build ID `VCFG-RESULT-V2`, and one
+`vitacheat.foreign-target-gate.result.v3`, build ID `VCFG-RESULT-V3`, and one
 nonzero 16-hex-digit run ID sampled from documented system time. Its first two
 ordered tests are `clear-controller-result` and
-`controller-run-identity`; a successful run now has exactly 32 tests.
+`controller-run-identity`; a successful run now has exactly 35 tests.
 
 The operator preserves the prior result before launch. Its exact bytes remain
 stale waiting evidence and must not be compared to the new test order. Polling
 continues until either an empty observation or a complete current-identity
 document appears. Partial current writes are preserved and retried. A complete
 document is current only if schema, build ID, titles, firmware, scope, and
-nonzero run ID match, the run ID differs from a preserved version-2 result,
+nonzero run ID match, the run ID differs from a preserved version-3 result,
 and `clear-controller-result` passed. A complete current record may be
 accepted without observing the transient empty file; this covers an atomic or
 too-fast clear/rewrite. Structurally complete malformed or identity-mismatched
@@ -215,11 +223,11 @@ The compiler is `arm-vita-eabi-gcc 15.2.0`; binutils is `2.46.1`.
 The pinned header fixes `SceProcEventHandler` at `0x1c` bytes and exposes
 `create`, `exit`, `kill`, `stop`, `start`, and `switch_process` callbacks.
 It labels exit as current-process exit and kill as initiated by SceShell, but
-does not specify create/start ordering, suspend/resume delivery, concurrent
-dispatch, callback timing relative to target `main`, or quiescence after
-unregister. This gate registers only create, start, exit, and kill; stop and
-switch callbacks are null. The bounded fixture poll is therefore an
-observation accommodation, not a claim about undocumented callback order.
+does not document the repeated start phases or quiescence after unregister.
+The offline retail-3.65 analysis established create-before-start ordering and
+at least 19 synchronous starts for this exact firmware; hardware must still
+falsify callback reachability/classification in this plugin. The gate registers
+only create, start, exit, and kill; stop and switch callbacks are null.
 `SceProcEventInvokeParam1`/`Param2` unknown fields and callback `event_type`
 are never interpreted as identity, ordering, or generation.
 
@@ -233,18 +241,19 @@ unregister/drain handling, so they are not evidence for this gate's cleanup.
 The allocation-free kernel service owns one target record and one controller
 session:
 
-1. A registered `create` callback exact-queries the event PID's title. Only
-   `VCFT00001` can create a candidate. A lifecycle revision is assigned in
-   kernel state; callback parameter fields are ignored.
-2. The first matching `start` must follow that exact create. It assigns the
-   nonzero monotonic generation and binds the PID, lifecycle revision, kernel
-   module-object UID, process-visible module UID returned by the successful
-   module-info query, fingerprint, normalized `VitaCheatFtTarget` name, and at
-   most four checked segments.
-3. Duplicate, missed, out-of-order, malformed, concurrent, or exhausted
-   lifecycle transitions trip one permanent fail-closed latch. A reset/reboot
-   is then required. A process that predates registration has no create
-   generation, cannot be opened, and a later start event fails closed.
+1. A registered `create` callback exact-queries the event PID's title and
+   complete main-module snapshot. Only `VCFT00001` can bind the PID, one
+   nonzero monotonic generation, lifecycle revision, kernel module-object UID,
+   process-visible module UID, fingerprint, normalized module name, and at
+   most four checked segments. Incomplete or invalid identity never authorizes.
+2. Every matching `start` must follow that exact create and revalidate the
+   title plus the byte-exact module snapshot. Repeated same-PID starts are
+   idempotent and preserve generation/revision. Identity churn fails closed.
+3. Duplicate create, missed create, start-before-create, malformed,
+   concurrent, exhausted, or mismatched lifecycle transitions trip one
+   permanent fail-closed latch. A reset/reboot is then required. A process
+   that predates registration has no create generation, cannot be opened, and
+   a later start event fails closed.
    A callback observed between native registration and committing the
    registered state also trips the latch instead of being silently dropped.
 4. Matching exit or kill invalidates the registry and every handle before a
@@ -284,16 +293,19 @@ NID is `0x46544731`; library NID is `0x56434647`.
 
 | Export | NID | Request | Response |
 |---|---:|---:|---:|
-| `vcfgGetStatus` | `0x18D84F21` | 16 bytes | 48 bytes |
+| `vcfgGetStatus` | `0x18D84F21` | 16 bytes | 48 bytes (v1) or 96 bytes (v2) |
 | `vcfgOpenExactFixture` | `0xA8B1466C` | 16 bytes | 32 bytes |
 | `vcfgReadFixtureSegment` | `0x70F14E77` | 32 bytes | 80 bytes |
 | `vcfgClose` | `0x2CB3D522` | 24 bytes | 16 bytes |
 
 All layouts have compile-time size assertions and exact version, size,
-capability, reserved-zero, handle, and range validation. Status exposes only a
-bounded runtime state, capability mask, maximum read, timeout, ABI flags,
-target state, last result, and diagnostic stage. PID, generation, revision,
-module UIDs, fingerprint, segment bases, and addresses remain kernel-only.
+capability, reserved-zero, handle, and range validation. Status v1 remains the
+original 48-byte response and flags. Status v2 appends saturating counts for
+create callbacks, start callbacks, successful start revalidations, ignored
+non-targets, target-create matches/authorizations, plus the last lifecycle
+event/result/stage and saturation bits. Counters are cumulative and compared
+as launch-to-launch deltas. PID, generation, revision, module UIDs,
+fingerprint, segment bases, addresses, and raw event types remain kernel-only.
 
 `symbol-inventory.txt` is build-failing allowlist enforcement for all kernel
 imports, four exports, four generated syscall stubs, and the linked target and
@@ -303,12 +315,15 @@ present.
 
 ## Host validation
 
-The portable model covers exact create/start/exit/kill ordering, unrelated
-events, duplicate and out-of-order events, PID and both module-UID reuse,
-generation/revision exhaustion, wrong caller, module churn, clock rollback,
-timeout, concurrent exit during target read or copy-out, stale callbacks,
-malformed ABI, bad pointers, exact 1/63/64 reads, 0/65 rejection, permissions,
-checked ranges, close/replay, and stale handles after exit/relaunch. The
+The portable model covers create-bound generation, 20 idempotent same-PID
+starts with arbitrary raw event types, start-before-create, duplicate create,
+create snapshot failure, target/non-target classification, PID/title/module
+identity churn, exit/kill invalidation, counter saturation, callback fencing,
+reboot-only unload, PID and both module-UID reuse, generation/revision
+exhaustion, wrong caller, clock rollback, timeout, concurrent exit during
+target read or copy-out, malformed ABI, bad pointers, exact 1/63/64 reads,
+0/65 rejection, permissions, checked ranges, close/replay, and stale handles
+after exit/relaunch. The
 startup tests cover exact stage ordering, canonical encode/decode, every
 truncated length, single-byte corruption, malformed identity/reserved fields,
 version-1 compatibility, delayed `-13/-13/-12` readiness, permanent
@@ -375,12 +390,14 @@ The final clean cross-build inventory is:
 
 | Artifact | Bytes | SHA-256 |
 |---|---:|---|
-| `vitacheat-foreign-target-gate.skprx` | 11,299 | `f2b9c59f296eb05485523f294164a6b173c8dce2ddb5900b02ee19976cdc96a7` |
+| `vitacheat-foreign-target-gate.skprx` | 11,853 | `bf4b08fd16ef6a6c249958fba094bef8eb83844035895619e82e4b4b8c6eba7f` |
 | `vitacheat-foreign-target-fixture.vpk` | 7,643 | `b4e64cdaeb25f1c3c9df1d6da7acb2505e9a29ccd368b527f3af2e3258459a16` |
-| `vitacheat-foreign-target-controller.vpk` | 7,514 | `9cf05f5abe2ae05b876abda6588192e720e9091cbadcaa42c2bde02aabaef883` |
+| `vitacheat-foreign-target-controller.vpk` | 8,441 | `743718060bc76781bb387db4408136b06d095e26e777779f89989680f77e9433` |
 | `libVitaCheatForeignGate_stub.a` | 3,728 | `63199aafac1662bd6724d6ae1140db3768a822606bf68b157a80c7b0cff6df10` |
 | Target `eboot.bin` | 10,659 | `404b482bb49ea2a086c1e59c5b7ac3d7ba42ea83d22784ee268035541cebfc87` |
-| Controller `eboot.bin` | 10,516 | `0bbb33f81fde761be7a99ef2e5023463532c9f6b80dbe53bc0cf2f8637762371` |
+| Controller `eboot.bin` | 11,458 | `e496086b329cfeae40b22f90c418f3370554170f666854f45884432caa8658c3` |
+| `symbol-inventory.txt` | 1,863 | `b5f8e9840001e8b58de447acd85108da217b5c8438994d08eb4cd6a9451c8ffa` |
+| `artifact-inventory.txt` | 430 | `39774ca42551418b3f34fc9b49f8149580717e021215b443f47259910ed69afe` |
 
 Each VPK contains only `sce_sys/param.sfo` and `eboot.bin`, both stamped
 `1980-01-01T00:00:00`. The target SFO is 912 bytes with SHA-256
@@ -403,6 +420,8 @@ gate stubs plus AppMgr, control, I/O, thread/process, and C runtime symbols.
 Version 2 adds documented `sceKernelGetSystemTimeWide` to both client
 allowlists for the bounded target deadline and non-authoritative controller
 run identity; the 11 kernel imports and four exports are unchanged.
+The create-bound lifecycle/status-v2 correction adds no kernel import, client
+symbol, export, or stub member.
 The linked Vita startup runtime imports allocator primitives even though the
 gate, target, and controller source performs no dynamic allocation.
 The generated archive uses deterministic GNU `ar`/`ranlib` mode, and the VPK
@@ -434,14 +453,18 @@ Use only a user-owned test Vita on firmware 3.65. Preserve the original
 5. Poll the startup path read-only. Preserve distinct partial/invalid bytes and
    send no input while the path is empty, malformed, or below stage 6. Require
    one complete version-2 stage-6 record with the exact identity, integrity,
-   result tuple `0/-12/0/0`, readiness result zero, and bounded attempts/time;
+   result tuple `0/-12/0/0`, readiness result zero, exactly one attempt, and
+   bounded elapsed time;
    independently require the exact 32-byte layout and complete fixture JSON.
    Then send exactly
    `press cross; wait 100ms; release cross` once. The marker is not evidence of
    a process event.
 6. The controller opens the event-registered target and performs exact
    1/63/64-byte reads plus bounded rejection tests only after its independent
-   kernel `TARGET_STARTED` check. It then destroys only `VCFT00001`, verifies
+   kernel `TARGET_STARTED` check. Status v2 must show exactly one target-create
+   match/authorization delta, at least 19 successful start revalidations, no
+   saturation, and a final successful start-revalidated stage. It then
+   destroys only `VCFT00001`, requires a successful exit diagnostic, verifies
    the live handle is stale, clears all three target evidence paths, and
    relaunches the fixture.
 7. Repeat the exact stage-6/layout/fixture validation and one bounded X in the
@@ -472,9 +495,11 @@ The second-run diagnostic stop matrix is strict:
 | partial/corrupt/wrong-sized | an in-place update or write fault, but no valid stage | preserve every distinct value; poll read-only; no input |
 | valid stage 1-5 | exactly the named boundary completed | stop at timeout before input |
 | stage 6 with unexpected result | target reached prompt but a prerequisite failed | no input; stop |
-| stage 3 with last `-13` and readiness `-4605` | target entered, but registry readiness did not become observable within two seconds; callback delivery remains unproven | no input; preserve and stop |
+| stage 3 with last `-13` and readiness `-4605` | target entered, but create-bound readiness was not observable within two seconds; status-v2 counters must distinguish no create from classification/snapshot/fail-closed failure | no input; preserve and stop |
 | stage 3 with another failure, clock rollback, or handle leak | bounded readiness contract failed | no input; preserve and stop |
-| stage 6 v2 with `0/-12/0/0`, readiness result zero, and valid layout/fixture | target user mode is ready for one X; process-event generation remains unproven | send one bounded X |
+| stage 6 v2 reaches `-12` after more than one attempt | readiness was delayed past target main contrary to the create-bound model | no input; preserve lifecycle diagnostics |
+| stage 6 v2 with `0/-12/0/0`, readiness result zero, exactly one attempt, and valid layout/fixture | target user mode is ready for one X; marker remains non-authoritative | send one bounded X, then require controller status-v2 deltas |
+| controller lacks one create authorization, 19 start revalidations, or reports saturation/failure | callback reachability/classification or exact identity contradicted the corrected model | preserve diagnostics; no retry |
 | stage 7 persists | X was observed but controller launch did not return | never repeat input; stop at timeout |
 | stage 8 | controller launch returned with the recorded code | rely only on resumed controller kernel status for generation proof |
 

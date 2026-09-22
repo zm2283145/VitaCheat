@@ -63,7 +63,6 @@ _Static_assert(VITACHEAT_FOREIGN_GATE_FIRMWARE == UINT32_C(0) ||
 
 static vc_ftg_service g_foreign_gate = VC_FTG_SERVICE_INITIALIZER;
 static SceUID g_proc_event_uid = -1;
-static bool g_runtime_unload_blocked;
 
 static void native_zero(void *value, SceSize size)
 {
@@ -304,13 +303,13 @@ static int native_process_started(
     SceProcEventInvokeParam1 *param,
     int flags)
 {
-    (void)event_type;
     (void)param;
     (void)flags;
-    (void)vc_ftg_service_process_event(
+    (void)vc_ftg_service_process_event_with_type(
         &g_foreign_gate,
         VC_FTG_PROCESS_STARTED,
-        (uint32_t)pid);
+        (uint32_t)pid,
+        (uint32_t)event_type);
     return 0;
 }
 
@@ -354,7 +353,7 @@ static const SceProcEventHandler g_process_handlers = {
 
 int vcfgGetStatus(
     const vc_ftg_status_request *request,
-    vc_ftg_status_response *response)
+    void *response)
 {
     return vc_ftg_service_get_status(
         &g_foreign_gate, request, response);
@@ -404,7 +403,6 @@ int module_start(SceSize args, void *argp)
     (void)args;
     (void)argp;
     g_proc_event_uid = -1;
-    g_runtime_unload_blocked = false;
     native_zero(&dependencies, sizeof(dependencies));
     native_zero(&config, sizeof(config));
     native_zero(&firmware, sizeof(firmware));
@@ -471,7 +469,6 @@ int module_start(SceSize args, void *argp)
             VC_FTG_DIAGNOSTIC_REGISTRATION_FAILED);
         return SCE_KERNEL_START_SUCCESS;
     }
-    g_runtime_unload_blocked = true;
     (void)vc_ftg_service_set_registered(
         &g_foreign_gate,
         true,
@@ -510,7 +507,8 @@ int module_stop(SceSize args, void *argp)
             memory_order_acquire) != 0u) {
         return SCE_KERNEL_STOP_CANCEL;
     }
-    if (g_runtime_unload_blocked) {
+    if (!vc_ftg_service_runtime_unload_allowed(
+            &g_foreign_gate)) {
         return SCE_KERNEL_STOP_CANCEL;
     }
     native_zero(

@@ -100,11 +100,12 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
       retail 3.65 hardware and retain the exact result, artifact hashes,
       process-event ordering, suspend/resume residency, and restoration proof.
       The first attempt stopped before target observability. The diagnostic
-      rerun reached prompt-ready but observed `TARGET_UNAVAILABLE` before the
-      registry reached `TARGET_STARTED`; no input/read occurred. A bounded
-      fixture-only readiness probe and fresh controller-result identity now
-      address those two host/fixture races without substituting for kernel
-      authority and await a separately authorized rerun.
+      rerun reached prompt-ready but the old start-bound registry returned
+      `TARGET_UNAVAILABLE`; no input/read occurred. Offline retail-3.65
+      evidence proved one create followed by at least 19 starts before user
+      entry. Generation now binds at create, starts revalidate idempotently,
+      and append-only counter deltas await a separately authorized falsification
+      run without substituting user-mode evidence for kernel authority.
 - [ ] Design, review, and hardware-gate strong foreign-process attestation and
       a production target-read adapter before capturing any foreign bytes.
 - [x] Reconcile trusted catalog addresses into verified module/segment-relative

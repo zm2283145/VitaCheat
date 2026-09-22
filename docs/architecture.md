@@ -389,9 +389,10 @@ foreign-target or production authority.
 The separate `experimental/foreign-target-gate/` keeps that proven ABI
 unchanged and adds an isolated event-generation model. A fixed
 `SceProcEventForDriver` registry accepts only exact source-owned `VCFT00001`
-create/start events, assigns a kernel monotonic generation, binds the dual
-module UID namespaces/fingerprint/segments, and invalidates the record and
-opaque controller handle on exit or kill. Exact `VCFC00001` caller identity is
+events. The unique create callback binds one kernel monotonic generation and
+the exact dual-module-UID/fingerprint/segment snapshot; repeated same-PID
+starts are idempotent exact revalidation. Exit or kill invalidates the record
+and opaque controller handle. Exact `VCFC00001` caller identity is
 kernel-derived. Its public read request contains only an opaque handle plus
 segment index/offset and a length capped at 64; PID, generation, revision,
 module identity, fingerprint, and addresses never cross the ABI. Lifecycle
@@ -399,18 +400,17 @@ callbacks that overlap an unlocked adapter operation atomically trip a
 permanent fail-closed latch, and a raced response is scrubbed before the
 blocked caller returns.
 
-The full host state machine and strict VitaSDK artifacts build successfully,
-but its first Vita attempt stopped before input/read at an early target-start
-observability gap. A diagnostic rerun reached prompt-ready while the registry
-was still unavailable at the target's immediate wrong-caller probe. The
-source-owned target now publishes an 80-byte versioned diagnostic record and
-waits at most two seconds for the existing gate to return exact wrong-caller
-rejection; it retries only target-unavailable and cannot create lifecycle
-authority. The controller also clears its prior result and emits a nonzero
-current-run identity before testing. `SceProcEventForDriver` callback timing
-relative to target `main` and unregister quiescence, two-homebrew
-suspend/resume residency, and foreign-target copying remain explicit
-hardware-gate questions.
+The first Vita attempt stopped before input/read at an early target-start
+observability gap. A diagnostic rerun reached prompt-ready while the old
+start-bound registry was unavailable. Offline retail-3.65 analysis proved one
+create followed by at least 19 synchronous starts before user-thread
+activation, so the corrected model authorizes at create and revalidates on
+every start. The source-owned target's 80-byte diagnostic record and bounded
+two-second wrong-caller probe cannot create lifecycle authority. Controller
+status v2 records non-sensitive counter deltas needed to falsify callback
+reachability/classification. Unregister quiescence, two-homebrew
+suspend/resume residency, and foreign-target copying remain explicit hardware
+questions.
 A pre-registration target receives no generation and cannot be opened; an
 out-of-order later start fails closed. Runtime unload is not a recovery path.
 See `docs/foreign-target-generation-gate.md`.

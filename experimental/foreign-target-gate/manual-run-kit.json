@@ -1,8 +1,8 @@
 {
-  "schema": "vitacheat.foreign-target-gate.manual-run.v3",
+  "schema": "vitacheat.foreign-target-gate.manual-run.v4",
   "base": {
     "native_read_gate_commit": "1233c08656a1c219d8de0fd7dde1257986ed3a97",
-    "foreign_generation_gate_parent": "079055acb349fe8440d7f42473168b7876483381",
+    "foreign_generation_gate_parent": "0548db67f7e992c3c7f618d36329bbeab51b0208",
     "startup_diagnostic_parent": "69788273460db9649349c8ec98aab00744649c6b",
     "device_tested_parent_commit": "8d74fad289b050e122c2656c0953da43aadef533",
     "device_tested_parent_result_sha256": "04563275cb1fc45398f1100f4ea9c1aa4874844c7f73db0d7cf7faf0f4b635bc"
@@ -22,11 +22,41 @@
       "layout_write": 0,
       "fixture_write": 0
     },
-    "proof": "target user mode reached prompt-ready while OpenExactFixture still observed registry state other than TARGET_STARTED",
-    "non_proof": "does not prove that the start callback never arrives or that a process generation was assigned",
+    "proof": "target user mode reached prompt-ready while the old start-bound state machine still returned TARGET_UNAVAILABLE",
+    "non_proof": "does not prove callback absence; private offline retail-3.65 analysis proved one create callback followed by at least 19 synchronous start-phase callbacks before user-thread activation",
     "input_count": 0,
     "handle_or_read_count": 0,
     "restored": true
+  },
+  "lifecycle_correction": {
+    "provenance_sha256": "6ccf57e1d288558a9bc96de08abcb66078f6b82866165fd944c4c35bf51f6f6e",
+    "authority": "the unique create callback binds the exact title/module snapshot, one nonzero generation, and one lifecycle revision",
+    "start_semantics": "every same-PID start callback revalidates the exact title and complete module snapshot without changing generation or revision",
+    "raw_event_type": "diagnostic input only; ignored for identity, authority, generation, ordering, and classification",
+    "minimum_expected_start_callbacks_per_launch": 19,
+    "status_abi": {
+      "request_version": 2,
+      "response_bytes": 96,
+      "compatible_version_1_response_bytes": 48,
+      "counters_are_cumulative": true,
+      "required_delta_fields": [
+        "create_callback_count",
+        "start_callback_count",
+        "start_revalidation_count",
+        "target_create_match_count",
+        "target_create_authorized_count"
+      ],
+      "forbidden_fields": [
+        "PID",
+        "generation",
+        "revision",
+        "module UID",
+        "fingerprint",
+        "segment base",
+        "address",
+        "raw event_type"
+      ]
+    }
   },
   "build": {
     "source": "experimental/foreign-target-gate/vita",
@@ -42,8 +72,8 @@
   "artifacts": [
     {
       "name": "vitacheat-foreign-target-gate.skprx",
-      "bytes": 11299,
-      "sha256": "f2b9c59f296eb05485523f294164a6b173c8dce2ddb5900b02ee19976cdc96a7"
+      "bytes": 11853,
+      "sha256": "bf4b08fd16ef6a6c249958fba094bef8eb83844035895619e82e4b4b8c6eba7f"
     },
     {
       "name": "vitacheat-foreign-target-fixture.vpk",
@@ -52,8 +82,8 @@
     },
     {
       "name": "vitacheat-foreign-target-controller.vpk",
-      "bytes": 7514,
-      "sha256": "9cf05f5abe2ae05b876abda6588192e720e9091cbadcaa42c2bde02aabaef883"
+      "bytes": 8441,
+      "sha256": "743718060bc76781bb387db4408136b06d095e26e777779f89989680f77e9433"
     },
     {
       "name": "libVitaCheatForeignGate_stub.a",
@@ -92,8 +122,8 @@
         },
         {
           "path": "eboot.bin",
-          "bytes": 10516,
-          "sha256": "0bbb33f81fde761be7a99ef2e5023463532c9f6b80dbe53bc0cf2f8637762371",
+          "bytes": 11458,
+          "sha256": "e496086b329cfeae40b22f90c418f3370554170f666854f45884432caa8658c3",
           "zip_timestamp": "1980-01-01T00:00:00"
         }
       ]
@@ -206,9 +236,9 @@
   },
   "prelaunch_freshness": [
     "Before launch, preserve the complete prior controller result and its exact bytes/hash/run_id when present.",
-    "The controller truncates and verifies zero bytes at ux0:data/vitacheat-foreign-target-result.json before writing schema vitacheat.foreign-target-gate.result.v2 with build_id VCFG-RESULT-V2, a nonzero run_id, and a passing clear-controller-result test.",
+    "The controller truncates and verifies zero bytes at ux0:data/vitacheat-foreign-target-result.json before writing schema vitacheat.foreign-target-gate.result.v3 with build_id VCFG-RESULT-V3, a nonzero run_id, and a passing clear-controller-result test.",
     "An exact preserved prior result is stale waiting evidence, not an anomaly. Ignore it until an empty observation or a complete current-identity document appears.",
-    "A complete current result is fresh only when schema/build/title/firmware/scope match, run_id is nonzero and differs from a preserved v2 run_id, and clear-controller-result passed. A new complete result may be accepted without observing the transient empty file.",
+    "A complete current result is fresh only when schema/build/title/firmware/scope match, run_id is nonzero and differs from a preserved v3 run_id, and clear-controller-result passed. A new complete result may be accepted without observing the transient empty file.",
     "Preserve partial current writes and poll read-only. Reject a structurally complete malformed/current-identity mismatch; never infer tests from a partial document.",
     "Before each generation the controller truncates and verifies zero bytes at ux0:data/vitacheat-foreign-target-layout.bin.",
     "Before each generation the controller truncates and verifies zero bytes at ux0:data/vitacheat-foreign-target-startup.bin.",
@@ -218,14 +248,15 @@
   "run": [
     "Preserve the prior controller result before launch. During launch polling, treat its exact bytes/hash as stale waiting evidence rather than a test-order failure.",
     "Launch VCFC00001 before VCFT00001.",
-    "Require a complete current controller v2 result with exact build/schema/run identity and passing clear-controller-result; allow the controller to verify target-unavailable, clear all three target evidence paths, and launch VCFT00001.",
+    "Require a complete current controller v3 result with exact build/schema/run identity and passing clear-controller-result; preserve its pre-target status-v2 diagnostic baseline, then allow the controller to verify target-unavailable, clear all three target evidence paths, and launch VCFT00001.",
     "Poll the startup-stage path read-only. Preserve every distinct invalid/partial byte sequence and continue polling without input.",
-    "Require one complete valid v2 prompt-ready record with exact build/title/schema identity, sentinel result 0, wrong-caller last result -12, readiness probe result 0, a nonzero bounded attempt count and bounded elapsed time, layout result 0, and fixture result 0.",
+    "Require one complete valid v2 prompt-ready record with exact build/title/schema identity, sentinel result 0, wrong-caller last result -12, readiness probe result 0, exactly one attempt, bounded elapsed time, layout result 0, and fixture result 0. Any delayed -13 to -12 transition contradicts create-before-user-entry and stops before input.",
     "Require the exact 32-byte layout and complete fixture JSON independently; the startup record alone is never target-start or read authority.",
     "Send exactly one documented bounded input: press cross; wait 100ms; release cross.",
-    "Allow VCFC00001 to require kernel TARGET_STARTED, read, destroy only VCFT00001, and verify the stale handle.",
+    "After resume, require the controller's kernel status-v2 evidence for generation 1: exactly one target-create match and authorization delta, at least one create callback delta, at least 19 start callback and successful same-PID revalidation deltas, no saturation, and a final successful start-revalidated lifecycle stage. Only then allow open/read.",
+    "Allow VCFC00001 to require kernel TARGET_STARTED, read, destroy only VCFT00001, prove a successful exit lifecycle stage, and verify the stale handle.",
     "Allow VCFC00001 to clear all three target evidence paths and relaunch VCFT00001.",
-    "Repeat the prompt-ready validation and one bounded X input for generation 2.",
+    "Repeat the prompt-ready validation and one bounded X input for generation 2, then require the same status-v2 deltas from the generation-1-exit baseline before open/read.",
     "Retrieve controller JSON, fixture JSON, startup records/partials, layouts, and all available serial lines beginning VCFG."
   ],
   "expected_tests": [
@@ -238,6 +269,7 @@
     "clear-fixture-result",
     "launch-target",
     "target-start-observed",
+    "generation-1-create-bound-diagnostics",
     "fixture-layout",
     "open-exact-fixture",
     "read-zero-rejected",
@@ -250,12 +282,14 @@
     "bad-output-pointer-rejected",
     "destroy-source-owned-target",
     "target-exit-observed",
+    "generation-1-exit-diagnostics",
     "stale-handle-after-exit-rejected",
     "clear-fixture-layout-before-relaunch",
     "clear-startup-stage-before-relaunch",
     "clear-fixture-result-before-relaunch",
     "relaunch-target",
     "target-relaunch-observed",
+    "generation-2-create-bound-diagnostics",
     "fixture-layout-after-relaunch",
     "old-handle-after-relaunch-rejected",
     "open-relaunched-fixture",
@@ -290,7 +324,7 @@
     },
     {
       "observation": "valid stage 3 with last code -13 and probe result -4605",
-      "conclusion": "target main ran but the kernel registry never became TARGET_STARTED within the two-second readiness deadline; callback delivery remains unproven",
+      "conclusion": "target main ran but create-bound registry readiness was not observable within the two-second deadline; the controller status-v2 counters are required to distinguish no create, failed create snapshot/classification, or a fail-closed lifecycle defect",
       "action": "send no input and stop"
     },
     {
@@ -309,9 +343,19 @@
       "action": "send no input and stop"
     },
     {
-      "observation": "valid v2 stage 6 with results 0, -12, 0, 0, readiness probe result 0, a nonzero bounded attempt count, and bounded elapsed time",
-      "conclusion": "source-owned target is ready for one bounded X; process-event generation is still unproven",
+      "observation": "valid stage 6 reaches -12 only after more than one attempt",
+      "conclusion": "authorization was delayed past target main despite the create-bound model; the probe preserved the anomaly but must not hide it",
+      "action": "send no input; preserve startup and controller lifecycle diagnostics, then stop"
+    },
+    {
+      "observation": "valid v2 stage 6 with results 0, -12, 0, 0, readiness probe result 0, exactly one attempt, and bounded elapsed time",
+      "conclusion": "source-owned target is ready for one bounded X; the marker remains non-authoritative and generation proof still requires the resumed controller status-v2 counter deltas",
       "action": "also validate layout and fixture JSON, then allow exactly one bounded X"
+    },
+    {
+      "observation": "current controller v3 lacks exactly one target-create match/authorization delta, at least 19 successful start revalidations, or reports saturation/failure",
+      "conclusion": "callback reachability, classification, snapshot binding, or idempotent revalidation contradicted the corrected lifecycle model",
+      "action": "stop at the first failed controller test; preserve all lifecycle_diagnostics snapshots and perform no retry"
     },
     {
       "observation": "valid stage 7 persists",

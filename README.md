@@ -200,13 +200,15 @@ segment-relative read of at most 64 bytes. The Vita kit produces two VPKs and
 one SKPRX with build-failing import/export allowlists and no automatic
 deployment. A first guarded hardware attempt stopped before input or any
 foreign read when no target artifact became observable; restoration completed
-byte-exact. A diagnostic rerun then reached a valid source-owned prompt-ready
-record, but its immediate wrong-caller syscall still saw the target registry as
-unavailable. The current correction bounds that target-only readiness race and
-gives controller results an explicit current-run identity. It has not run on
-hardware. Process-event ordering, two-application suspend/resume residency,
-foreign copying, and unload remain unproven, and no userspace marker or
-retail/production authority is claimed.
+byte-exact. A diagnostic rerun then reached a valid source-owned prompt-ready record, but
+the old start-bound registry was unavailable. Offline retail-3.65 analysis
+proved a unique create callback followed by at least 19 synchronous starts
+before user-thread activation. The corrected model binds generation and exact
+module identity at create, treats starts as idempotent revalidation, and emits
+append-only non-sensitive lifecycle counters. It has not run on hardware.
+Callback reachability/classification, two-application suspend/resume
+residency, foreign copying, and unload remain unproven, and no userspace marker
+or retail/production authority is claimed.
 
 The first Vita-facing build is the deliberately unprivileged and now
 hardware-tested

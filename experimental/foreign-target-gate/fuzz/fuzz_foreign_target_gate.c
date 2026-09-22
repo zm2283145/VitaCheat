@@ -364,6 +364,18 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
         const uint8_t opcode = data[index];
         uint32_t pid;
         vc_ftg_process_event event;
+        vc_ftg_result event_result;
+        uint64_t generation_before =
+            service.registry.generation;
+        uint64_t revision_before =
+            service.registry.lifecycle_revision;
+        const bool target_start_revalidation =
+            ((opcode >> 2u) & 3u) == 1u &&
+            (opcode & 3u) == 0u &&
+            service.registry.state ==
+                VC_FTG_TARGET_STARTED &&
+            service.registry.process_id ==
+                FUZZ_TARGET_PID;
 
         switch (opcode & 3u) {
         case 0u:
@@ -383,8 +395,21 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
             event == VC_FTG_PROCESS_STARTED) {
             platform.target_alive = true;
         }
-        (void)vc_ftg_service_process_event(
-            &service, event, pid);
+        event_result =
+            vc_ftg_service_process_event_with_type(
+                &service,
+                event,
+                pid,
+                (uint32_t)fuzz_u64(
+                    data + index, size - index));
+        if (target_start_revalidation &&
+            event_result == VC_FTG_RESULT_OK) {
+            fuzz_check(service.registry.generation ==
+                       generation_before);
+            fuzz_check(
+                service.registry.lifecycle_revision ==
+                revision_before);
+        }
         if ((event == VC_FTG_PROCESS_EXITED ||
              event == VC_FTG_PROCESS_KILLED) &&
             pid == FUZZ_TARGET_PID) {
@@ -471,6 +496,11 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
                service.session.handle != 0u);
     fuzz_check(!service.session.active ||
                service.session.target_generation != 0u);
+    fuzz_check(
+        (atomic_load_explicit(
+             &service.counter_saturation_flags,
+             memory_order_relaxed) &
+         ~VC_FTG_COUNTER_SAT_KNOWN_MASK) == 0u);
     return 0;
 }
 

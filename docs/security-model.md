@@ -324,11 +324,11 @@ does not satisfy any of those requirements.
 - Compile-time titles are exactly `VCFT00001` and `VCFC00001`; only the
   controller can open/read/close, while the target verifies wrong-caller
   rejection.
-- A target create event establishes only an exact-title candidate. The
-  matching first start receives a nonzero monotonic kernel generation and
-  binds exact PID, dual module UID namespaces, fingerprint, normalized module
-  name, segments, and lifecycle revision.
-- Unknown, duplicate, missed, out-of-order, concurrent, or exhausted
+- A target create event binds the exact title and complete valid main-module
+  snapshot to one nonzero monotonic kernel generation and lifecycle revision.
+  Repeated same-PID start callbacks are idempotent exact identity
+  revalidations and never advance generation or revision.
+- Unknown, duplicate-create, missed-create, out-of-order, concurrent, or exhausted
   lifecycle state fails closed for the module lifetime. Exit and kill scrub
   the target and all handles before any relaunch can be authorized.
 - Open takes no selector and returns only an opaque two-second handle. Read
@@ -350,11 +350,14 @@ does not satisfy any of those requirements.
 - The controller result is truncated and verified empty before it publishes a
   versioned build identity and nonzero run identity. Exact preserved bytes and
   partial rewrites are waiting evidence, never current test results.
+- Append-only status v2 exposes only cumulative saturating lifecycle counts
+  and last event/result/stage. Hardware uses baseline deltas; raw event types
+  and all target identifiers remain non-authoritative and undisclosed.
 - Stop unregisters the stored callback UID but always refuses runtime unload
   after a successful registration; reboot is mandatory because VitaSDK does
   not document callback drain semantics.
 - No device pass exists yet; both guarded attempts stopped before input/read,
-  and this bounded race correction has not been run. See
+  and this create-bound correction has not been run. See
   `docs/foreign-target-generation-gate.md` for the exact non-claims and manual
   protocol.
 

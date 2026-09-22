@@ -37,6 +37,8 @@ typedef struct fake_platform {
     bool copies_ok;
     bool module_ok;
     bool read_ok;
+    bool target_title_wrong;
+    bool other_uses_target_title;
     bool exit_during_read;
     bool exit_during_copy_to;
     vc_ftg_result concurrent_event_result;
@@ -78,7 +80,12 @@ static bool fake_get_title(
 
     memset(title_id, 0, VC_FTG_TITLE_ID_CAPACITY);
     if (process_id == TARGET_PID && platform->target_alive) {
-        memcpy(title_id, "VCFT00001", sizeof("VCFT00001"));
+        memcpy(
+            title_id,
+            platform->target_title_wrong
+                ? "VCOX00001"
+                : "VCFT00001",
+            sizeof("VCFT00001"));
         return true;
     }
     if (process_id == CONTROLLER_PID &&
@@ -87,7 +94,12 @@ static bool fake_get_title(
         return true;
     }
     if (process_id == OTHER_PID) {
-        memcpy(title_id, "VCOX00001", sizeof("VCOX00001"));
+        memcpy(
+            title_id,
+            platform->other_uses_target_title
+                ? "VCFT00001"
+                : "VCOX00001",
+            sizeof("VCOX00001"));
         return true;
     }
     return false;
@@ -102,7 +114,9 @@ static bool fake_get_module(
 
     if (!platform->module_ok ||
         !platform->target_alive ||
-        process_id != TARGET_PID) {
+        (process_id != TARGET_PID &&
+         !(process_id == OTHER_PID &&
+           platform->other_uses_target_title))) {
         return false;
     }
     *module = platform->target_module;
@@ -319,6 +333,13 @@ static void init_status_request(
     memset(request, 0, sizeof(*request));
     request->version = VC_FTG_ABI_VERSION;
     request->struct_size = sizeof(*request);
+}
+
+static void init_status_request_v2(
+    vc_ftg_status_request *request)
+{
+    init_status_request(request);
+    request->version = VC_FTG_STATUS_VERSION_2;
 }
 
 static void init_read_request(
@@ -702,6 +723,298 @@ static void test_duplicate_out_of_order_and_missed_events(void)
           VC_FTG_DIAGNOSTIC_DUPLICATE_EVENT);
 }
 
+static void test_create_bound_lifecycle_diagnostics(void)
+{
+    fixture fixture_value;
+    vc_ftg_status_request request;
+    vc_ftg_status_response_v2 compatibility_response;
+    vc_ftg_status_response_v2 response_v2;
+    vc_ftg_open_request open_request;
+    vc_ftg_open_response open_response;
+    uint64_t generation;
+    uint64_t revision;
+    uint32_t index;
+
+    initialize_fixture(&fixture_value, true);
+    init_status_request(&request);
+    memset(
+        &compatibility_response,
+        0xa5,
+        sizeof(compatibility_response));
+    CHECK(vc_ftg_service_get_status(
+              &fixture_value.service,
+              &request,
+              &compatibility_response) ==
+          VC_FTG_RESULT_OK);
+    CHECK(compatibility_response.base.version ==
+          VC_FTG_STATUS_VERSION_1);
+    CHECK(compatibility_response.base.struct_size ==
+          sizeof(compatibility_response.base));
+    CHECK(compatibility_response.base.abi_flags ==
+          VC_FTG_ABI_FLAGS_V1);
+    for (index = sizeof(compatibility_response.base);
+         index < sizeof(compatibility_response);
+         ++index) {
+        CHECK(((const uint8_t *)&compatibility_response)[index] ==
+              UINT8_C(0xa5));
+    }
+
+    CHECK(vc_ftg_service_process_event_with_type(
+              &fixture_value.service,
+              VC_FTG_PROCESS_CREATED,
+              TARGET_PID,
+              UINT32_C(0x11111111)) == VC_FTG_RESULT_OK);
+    CHECK(fixture_value.service.registry.state ==
+          VC_FTG_TARGET_STARTED);
+    CHECK(fixture_value.service.registry.generation != 0u);
+    CHECK(fixture_value.service.registry.lifecycle_revision != 0u);
+    generation = fixture_value.service.registry.generation;
+    revision =
+        fixture_value.service.registry.lifecycle_revision;
+    fixture_value.platform.caller_process_id = TARGET_PID;
+    init_status_request(&open_request);
+    memset(&open_response, 0, sizeof(open_response));
+    CHECK(vc_ftg_service_open_exact_fixture(
+              &fixture_value.service,
+              &open_request,
+              &open_response) ==
+          VC_FTG_RESULT_CALLER_TITLE_MISMATCH);
+    CHECK(!fixture_value.service.session.active);
+    CHECK(open_response.handle == 0u);
+    fixture_value.platform.caller_process_id =
+        CONTROLLER_PID;
+    for (index = 0u; index < 20u; ++index) {
+        CHECK(vc_ftg_service_process_event_with_type(
+                  &fixture_value.service,
+                  VC_FTG_PROCESS_STARTED,
+                  TARGET_PID,
+                  UINT32_C(0x10000) + index) ==
+              VC_FTG_RESULT_OK);
+        CHECK(fixture_value.service.registry.generation ==
+              generation);
+        CHECK(
+            fixture_value.service.registry.lifecycle_revision ==
+            revision);
+    }
+
+    init_status_request_v2(&request);
+    memset(&response_v2, 0xa5, sizeof(response_v2));
+    CHECK(vc_ftg_service_get_status(
+              &fixture_value.service,
+              &request,
+              &response_v2) == VC_FTG_RESULT_OK);
+    CHECK(response_v2.base.version ==
+          VC_FTG_STATUS_VERSION_2);
+    CHECK(response_v2.base.struct_size == sizeof(response_v2));
+    CHECK(response_v2.base.abi_flags == VC_FTG_ABI_FLAGS);
+    CHECK(response_v2.base.target_state ==
+          VC_FTG_TARGET_STARTED);
+    CHECK(response_v2.create_callback_count == 1u);
+    CHECK(response_v2.start_callback_count == 20u);
+    CHECK(response_v2.start_revalidation_count == 20u);
+    CHECK(response_v2.ignored_non_target_count == 0u);
+    CHECK(response_v2.target_create_match_count == 1u);
+    CHECK(response_v2.target_create_authorized_count == 1u);
+    CHECK(response_v2.counter_saturation_flags == 0u);
+    CHECK(response_v2.last_lifecycle_event ==
+          VC_FTG_PROCESS_STARTED);
+    CHECK(response_v2.last_lifecycle_result ==
+          VC_FTG_RESULT_OK);
+    CHECK(response_v2.last_lifecycle_stage ==
+          VC_FTG_DIAGNOSTIC_TARGET_START_REVALIDATED);
+    CHECK(response_v2.reserved0 == 0u);
+    CHECK(response_v2.reserved1 == 0u);
+}
+
+static void test_create_snapshot_and_identity_failures(void)
+{
+    fixture fixture_value;
+    uint32_t mutation;
+
+    initialize_fixture(&fixture_value, true);
+    fixture_value.platform.module_ok = false;
+    CHECK(vc_ftg_service_process_event(
+              &fixture_value.service,
+              VC_FTG_PROCESS_CREATED,
+              TARGET_PID) ==
+          VC_FTG_RESULT_LIFECYCLE_COMPROMISED);
+    CHECK(fixture_value.service.registry.state ==
+          VC_FTG_TARGET_NONE);
+    CHECK(fixture_value.service.diagnostic_stage ==
+          VC_FTG_DIAGNOSTIC_MODULE_QUERY);
+
+    initialize_fixture(&fixture_value, true);
+    fixture_value.platform.other_uses_target_title = true;
+    CHECK(vc_ftg_service_process_event(
+              &fixture_value.service,
+              VC_FTG_PROCESS_CREATED,
+              OTHER_PID) ==
+          VC_FTG_RESULT_LIFECYCLE_COMPROMISED);
+    CHECK(fixture_value.service.diagnostic_stage ==
+          VC_FTG_DIAGNOSTIC_MODULE_MISMATCH);
+
+    initialize_fixture(&fixture_value, true);
+    CHECK(vc_ftg_service_process_event(
+              &fixture_value.service,
+              VC_FTG_PROCESS_CREATED,
+              TARGET_PID) == VC_FTG_RESULT_OK);
+    fixture_value.platform.target_title_wrong = true;
+    CHECK(vc_ftg_service_process_event(
+              &fixture_value.service,
+              VC_FTG_PROCESS_STARTED,
+              TARGET_PID) ==
+          VC_FTG_RESULT_LIFECYCLE_COMPROMISED);
+    CHECK(fixture_value.service.diagnostic_stage ==
+          VC_FTG_DIAGNOSTIC_TARGET_IDENTITY_MISMATCH);
+
+    for (mutation = 0u; mutation < 5u; ++mutation) {
+        initialize_fixture(&fixture_value, true);
+        CHECK(vc_ftg_service_process_event(
+                  &fixture_value.service,
+                  VC_FTG_PROCESS_CREATED,
+                  TARGET_PID) == VC_FTG_RESULT_OK);
+        switch (mutation) {
+        case 0u:
+            ++fixture_value.platform.target_module
+                  .kernel_module_id;
+            break;
+        case 1u:
+            ++fixture_value.platform.target_module
+                  .process_module_id;
+            break;
+        case 2u:
+            ++fixture_value.platform.target_module
+                  .module_fingerprint;
+            break;
+        case 3u:
+            fixture_value.platform.target_module
+                .module_name[0] = (uint8_t)'X';
+            break;
+        default:
+            ++fixture_value.platform.target_module
+                  .segments[0]
+                  .base;
+            break;
+        }
+        CHECK(vc_ftg_service_process_event(
+                  &fixture_value.service,
+                  VC_FTG_PROCESS_STARTED,
+                  TARGET_PID) ==
+              VC_FTG_RESULT_LIFECYCLE_COMPROMISED);
+        CHECK(fixture_value.service.diagnostic_stage ==
+              VC_FTG_DIAGNOSTIC_MODULE_MISMATCH);
+    }
+}
+
+static void test_lifecycle_counters_and_unload_policy(void)
+{
+    fixture fixture_value;
+    vc_ftg_status_request request;
+    vc_ftg_status_response_v2 response;
+    uint64_t handle;
+
+    initialize_fixture(&fixture_value, true);
+    CHECK(!vc_ftg_service_runtime_unload_allowed(
+        &fixture_value.service));
+    atomic_store_explicit(
+        &fixture_value.service.create_callback_count,
+        UINT_MAX,
+        memory_order_relaxed);
+    atomic_store_explicit(
+        &fixture_value.service.start_callback_count,
+        UINT_MAX,
+        memory_order_relaxed);
+    atomic_store_explicit(
+        &fixture_value.service.start_revalidation_count,
+        UINT_MAX,
+        memory_order_relaxed);
+    atomic_store_explicit(
+        &fixture_value.service.ignored_non_target_count,
+        UINT_MAX,
+        memory_order_relaxed);
+    atomic_store_explicit(
+        &fixture_value.service.target_create_match_count,
+        UINT_MAX,
+        memory_order_relaxed);
+    atomic_store_explicit(
+        &fixture_value.service.target_create_authorized_count,
+        UINT_MAX,
+        memory_order_relaxed);
+    CHECK(vc_ftg_service_process_event(
+              &fixture_value.service,
+              VC_FTG_PROCESS_CREATED,
+              OTHER_PID) == VC_FTG_RESULT_OK);
+    CHECK(vc_ftg_service_process_event(
+              &fixture_value.service,
+              VC_FTG_PROCESS_CREATED,
+              TARGET_PID) == VC_FTG_RESULT_OK);
+    CHECK(vc_ftg_service_process_event(
+              &fixture_value.service,
+              VC_FTG_PROCESS_STARTED,
+              TARGET_PID) == VC_FTG_RESULT_OK);
+    init_status_request_v2(&request);
+    memset(&response, 0, sizeof(response));
+    CHECK(vc_ftg_service_get_status(
+              &fixture_value.service,
+              &request,
+              &response) == VC_FTG_RESULT_OK);
+    CHECK(response.create_callback_count == UINT_MAX);
+    CHECK(response.start_callback_count == UINT_MAX);
+    CHECK(response.start_revalidation_count == UINT_MAX);
+    CHECK(response.ignored_non_target_count == UINT_MAX);
+    CHECK(response.target_create_match_count == UINT_MAX);
+    CHECK(response.target_create_authorized_count == UINT_MAX);
+    CHECK(response.counter_saturation_flags ==
+          VC_FTG_COUNTER_SAT_KNOWN_MASK);
+
+    CHECK(vc_ftg_service_stop(
+              &fixture_value.service) == VC_FTG_RESULT_OK);
+    CHECK(!vc_ftg_service_runtime_unload_allowed(
+        &fixture_value.service));
+
+    initialize_fixture(&fixture_value, true);
+    handle = start_and_open(&fixture_value);
+    fixture_value.platform.target_alive = false;
+    CHECK(vc_ftg_service_process_event(
+              &fixture_value.service,
+              VC_FTG_PROCESS_KILLED,
+              TARGET_PID) == VC_FTG_RESULT_OK);
+    CHECK(fixture_value.service.registry.state ==
+          VC_FTG_TARGET_NONE);
+    CHECK(!fixture_value.service.session.active);
+    CHECK(handle != 0u);
+    CHECK(atomic_load_explicit(
+              &fixture_value.service.last_lifecycle_stage,
+              memory_order_relaxed) ==
+          VC_FTG_DIAGNOSTIC_TARGET_KILLED);
+
+    initialize_fixture(&fixture_value, true);
+    atomic_store_explicit(
+        &fixture_value.service.callback_active,
+        1u,
+        memory_order_release);
+    CHECK(vc_ftg_service_process_event(
+              &fixture_value.service,
+              VC_FTG_PROCESS_CREATED,
+              TARGET_PID) == VC_FTG_RESULT_BUSY);
+    atomic_store_explicit(
+        &fixture_value.service.callback_active,
+        0u,
+        memory_order_release);
+    {
+        vc_ftg_status_request status_request;
+        vc_ftg_status_response status_response;
+
+        init_status_request(&status_request);
+        CHECK(vc_ftg_service_get_status(
+                  &fixture_value.service,
+                  &status_request,
+                  &status_response) == VC_FTG_RESULT_OK);
+    }
+    CHECK(fixture_value.service.diagnostic_stage ==
+          VC_FTG_DIAGNOSTIC_CALLBACK_CONTENTION);
+}
+
 static void test_generation_and_revision_exhaustion(void)
 {
     fixture fixture_value;
@@ -729,10 +1042,6 @@ static void test_generation_and_revision_exhaustion(void)
     CHECK(vc_ftg_service_process_event(
               &fixture_value.service,
               VC_FTG_PROCESS_CREATED,
-              TARGET_PID) == VC_FTG_RESULT_OK);
-    CHECK(vc_ftg_service_process_event(
-              &fixture_value.service,
-              VC_FTG_PROCESS_STARTED,
               TARGET_PID) ==
           VC_FTG_RESULT_LIFECYCLE_COMPROMISED);
     CHECK(fixture_value.service.diagnostic_stage ==
@@ -751,6 +1060,11 @@ static void test_generation_and_revision_exhaustion(void)
     CHECK(vc_ftg_service_process_event(
               &fixture_value.service,
               VC_FTG_PROCESS_STARTED,
+              TARGET_PID) == VC_FTG_RESULT_OK);
+    fixture_value.platform.target_alive = false;
+    CHECK(vc_ftg_service_process_event(
+              &fixture_value.service,
+              VC_FTG_PROCESS_EXITED,
               TARGET_PID) ==
           VC_FTG_RESULT_LIFECYCLE_COMPROMISED);
     CHECK(fixture_value.service.diagnostic_stage ==
@@ -871,6 +1185,9 @@ static void test_unrelated_events_and_registration_failure(void)
               OTHER_PID) == VC_FTG_RESULT_OK);
     CHECK(fixture_value.service.registry.state ==
           VC_FTG_TARGET_NONE);
+    CHECK(atomic_load_explicit(
+              &fixture_value.service.ignored_non_target_count,
+              memory_order_relaxed) == 1u);
 
     CHECK(vc_ftg_service_set_registered(
               &fixture_value.service,
@@ -948,6 +1265,9 @@ int main(void)
     test_exit_relaunch_and_reuse();
     test_module_and_caller_revalidation();
     test_duplicate_out_of_order_and_missed_events();
+    test_create_bound_lifecycle_diagnostics();
+    test_create_snapshot_and_identity_failures();
+    test_lifecycle_counters_and_unload_policy();
     test_generation_and_revision_exhaustion();
     test_concurrent_exit_fails_closed();
     test_malformed_abi_and_close();
