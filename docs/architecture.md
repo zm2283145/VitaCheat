@@ -376,7 +376,13 @@ attestation nor foreign-process access. See `docs/hardware-gate.md`.
 The first 3.65 run proved module load and status but failed closed during
 main-module discovery before any read. Its append-only status v2 reports only
 the failed stage and raw API result; it never reports PID, module ID, address,
-segment base, fingerprint, or payload bytes.
+segment base, fingerprint, or payload bytes. The diagnostic retest proved that
+module-info succeeded and the failure was a local equality check between the
+main module's kernel UID and the process-visible UID returned in
+`SceKernelModuleInfo.modid`. The gate now keeps both as an unexposed dual
+binding, uses the kernel UID for module-info/fingerprint calls, and invalidates
+the session if either changes. This correction still has no on-device read
+evidence.
 
 The portable scanner contract is C11 plus an integer pointer type (`uintptr_t`)
 wide enough to represent object ranges. That holds for the supported Windows

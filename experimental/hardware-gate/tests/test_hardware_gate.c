@@ -16,7 +16,8 @@ static int failures;
     } while (0)
 
 #define TEST_PID UINT32_C(0x10203)
-#define TEST_MODULE_ID INT32_C(0x40506)
+#define TEST_KERNEL_MODULE_ID INT32_C(0x40506)
+#define TEST_PROCESS_MODULE_ID INT32_C(0x70809)
 #define TEST_FINGERPRINT UINT32_C(0x89abcdef)
 
 typedef struct fake_platform {
@@ -44,6 +45,7 @@ typedef struct fake_platform {
     bool copy_to_ok;
     bool read_ok;
     bool mutate_module_after_read;
+    bool mutate_process_module_id_after_read;
     bool reenter_during_read;
 } fake_platform;
 
@@ -202,6 +204,9 @@ static bool fake_read_process(
     if (platform->mutate_module_after_read) {
         ++platform->module.module_fingerprint;
     }
+    if (platform->mutate_process_module_id_after_read) {
+        ++platform->module.process_module_id;
+    }
     if (!platform->read_ok ||
         process_id != platform->process_id ||
         source_address < begin ||
@@ -250,8 +255,10 @@ static void initialize_fixture(
     memcpy(fixture_value->platform.title_id,
            "VCHG00001", sizeof("VCHG00001"));
     fixture_value->platform.module.process_id = TEST_PID;
-    fixture_value->platform.module.module_id =
-        TEST_MODULE_ID;
+    fixture_value->platform.module.kernel_module_id =
+        TEST_KERNEL_MODULE_ID;
+    fixture_value->platform.module.process_module_id =
+        TEST_PROCESS_MODULE_ID;
     fixture_value->platform.module.module_fingerprint =
         TEST_FINGERPRINT;
     fixture_value->platform.module.segment_count = 2u;
@@ -427,7 +434,8 @@ static void test_diagnostic_status_and_syscall_decode(void)
         VC_HG_DIAGNOSTIC_MODULE_FINGERPRINT_ZERO,
         VC_HG_DIAGNOSTIC_MODULE_NAME,
         VC_HG_DIAGNOSTIC_MODULE_SEGMENTS,
-        VC_HG_DIAGNOSTIC_RESPONSE_COPY
+        VC_HG_DIAGNOSTIC_RESPONSE_COPY,
+        VC_HG_DIAGNOSTIC_MODULE_PROCESS_UID
     };
     fixture fixture_value;
     vc_hg_status_request request;
@@ -543,6 +551,11 @@ static void test_open_and_module(void)
 
     initialize_fixture(&fixture_value, true, true);
     handle = open_session(&fixture_value);
+    CHECK(fixture_value.service.session.module
+              .kernel_module_id == TEST_KERNEL_MODULE_ID);
+    CHECK(fixture_value.service.session.module
+              .process_module_id ==
+          TEST_PROCESS_MODULE_ID);
     CHECK(fixture_value.platform.copy_from_calls == 1u);
     CHECK(fixture_value.platform.copy_to_calls == 1u);
     CHECK(fixture_value.platform.title_calls == 1u);
@@ -574,6 +587,11 @@ static void test_open_and_module(void)
               &fixture_value.service,
               &open_request, &open_response) ==
           VC_HG_RESULT_SESSION_ACTIVE);
+
+    initialize_fixture(&fixture_value, true, true);
+    fixture_value.platform.module.process_module_id =
+        fixture_value.platform.module.kernel_module_id;
+    (void)open_session(&fixture_value);
 }
 
 static void test_exact_reads_and_ranges(void)
@@ -824,6 +842,30 @@ static void test_faults_lifecycle_and_identity(void)
     CHECK(!fixture_value.service.session.active);
 
     fixture_value.platform.mutate_module_after_read = false;
+    initialize_fixture(&fixture_value, true, true);
+    first_handle = open_session(&fixture_value);
+    init_read_request(
+        &read_request, first_handle, 0u, 0u, 1u);
+    ++fixture_value.platform.module.kernel_module_id;
+    CHECK(vc_hg_service_read_self_segment(
+              &fixture_value.service,
+              &read_request, &read_response) ==
+          VC_HG_RESULT_MODULE_MISMATCH);
+    CHECK(!fixture_value.service.session.active);
+
+    initialize_fixture(&fixture_value, true, true);
+    first_handle = open_session(&fixture_value);
+    init_read_request(
+        &read_request, first_handle, 0u, 0u, 1u);
+    fixture_value.platform
+        .mutate_process_module_id_after_read = true;
+    CHECK(vc_hg_service_read_self_segment(
+              &fixture_value.service,
+              &read_request, &read_response) ==
+          VC_HG_RESULT_MODULE_MISMATCH);
+    CHECK(!fixture_value.service.session.active);
+
+    initialize_fixture(&fixture_value, true, true);
     first_handle = open_session(&fixture_value);
     init_read_request(
         &read_request, first_handle, 0u, 0u, 1u);
@@ -855,6 +897,20 @@ static void test_fail_closed_inputs_and_stop(void)
               &request, &response) ==
           VC_HG_RESULT_MODULE_MISMATCH);
     fixture_value.platform.module.module_name[0] = 'V';
+    fixture_value.platform.module.kernel_module_id = 0;
+    CHECK(vc_hg_service_open_self(
+              &fixture_value.service,
+              &request, &response) ==
+          VC_HG_RESULT_MODULE_MISMATCH);
+    fixture_value.platform.module.kernel_module_id =
+        TEST_KERNEL_MODULE_ID;
+    fixture_value.platform.module.process_module_id = 0;
+    CHECK(vc_hg_service_open_self(
+              &fixture_value.service,
+              &request, &response) ==
+          VC_HG_RESULT_MODULE_MISMATCH);
+    fixture_value.platform.module.process_module_id =
+        TEST_PROCESS_MODULE_ID;
     fixture_value.platform.copy_from_ok = false;
     CHECK(vc_hg_service_open_self(
               &fixture_value.service,

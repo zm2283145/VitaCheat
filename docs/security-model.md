@@ -44,9 +44,12 @@ and reads only that same caller process. It cannot identify or read a foreign
 title, and it adds no production capability.
 Its diagnostic status extension exposes only an enum stage and signed API
 return code. It does not expose process/module identifiers, addresses,
-fingerprints, segment bases, or data. The first guarded 3.65 run failed closed
-in module discovery before any read and therefore does not validate the native
-read path.
+fingerprints, segment bases, or data. The diagnostic 3.65 retest proved that
+module-info succeeded and an invalid cross-namespace UID equality check alone
+failed. The corrected gate binds both the kernel module UID and the
+process-visible module UID internally, uses only the kernel UID for kernel
+module operations, and invalidates the session if either binding changes.
+Neither run validates the native read path.
 
 ## Authority model
 
@@ -272,6 +275,10 @@ does not satisfy any of those requirements.
 - Each operation exact-validates ABI version, struct size, capability bits,
   reserved-zero fields, handle, module snapshot, segment, permission, and
   checked range.
+- Main-module discovery binds the kernel UID accepted by module-info and
+  fingerprint to the positive process-visible UID returned by module-info.
+  Both remain kernel-only session facts and are revalidated; numeric equality
+  is not assumed across UID namespaces.
 - The only data path is caller request to fixed kernel local, caller-process
   segment to a zeroed 64-byte kernel bounce, then initialized response to the
   same caller. Every step requires exact zero-success from VitaSDK safe-copy

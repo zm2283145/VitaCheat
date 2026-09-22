@@ -320,6 +320,10 @@ VitaSDK is not required to build and run the host tests. Building the Vita
 self-test VPK or the separately enabled hardware gate does require VitaSDK.
 The exact native build, inspection, manual install/removal, recovery, and
 result-capture protocol is in [docs/hardware-gate.md](docs/hardware-gate.md).
+The diagnostic 3.65 run proved that its prior `OpenSelf` failure was an invalid
+kernel-UID/process-UID equality assumption; the isolated gate now binds both
+UIDs internally and awaits a guarded hardware retest before any read is
+claimed.
 
 ## Relationship to VitaDebugger
 

@@ -97,7 +97,8 @@ typedef enum vc_hg_diagnostic_stage {
     VC_HG_DIAGNOSTIC_MODULE_NAME = 11,
     VC_HG_DIAGNOSTIC_MODULE_SEGMENTS = 12,
     VC_HG_DIAGNOSTIC_RESPONSE_COPY = 13,
-    VC_HG_DIAGNOSTIC_STAGE_COUNT = 14
+    VC_HG_DIAGNOSTIC_MODULE_PROCESS_UID = 14,
+    VC_HG_DIAGNOSTIC_STAGE_COUNT = 15
 } vc_hg_diagnostic_stage;
 
 typedef enum vc_hg_runtime_status {
@@ -245,7 +246,8 @@ typedef struct vc_hg_segment_snapshot {
 
 typedef struct vc_hg_module_snapshot {
     uint32_t process_id;
-    int32_t module_id;
+    int32_t kernel_module_id;
+    int32_t process_module_id;
     uint32_t module_fingerprint;
     uint32_t segment_count;
     uint8_t module_name[VC_HG_MODULE_NAME_CAPACITY];

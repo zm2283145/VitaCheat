@@ -69,10 +69,14 @@ address, segment base, fingerprint, or user data is added to diagnostics.
 
 `OpenSelf` derives the ambient syscall caller PID in the kernel, exact-matches
 the compile-time `VCHG00001` title ID, obtains that PID's main module, and
-snapshots its module ID, normalized exact name `VitaCheatHgClient`, fingerprint,
-and at most four segments. It returns one kernel-owned, nonzero, monotonically
-nonrepeating handle with a fixed two-second lifetime. The user never supplies
-an authoritative PID, module ID, address, or deadline.
+snapshots both its kernel module UID and process-visible module UID, normalized
+exact name `VitaCheatHgClient`, fingerprint, and at most four segments. The
+kernel UID remains authoritative for kernel module-info and fingerprint calls;
+the successful module-info query binds its returned process UID to the same
+snapshot. Both are revalidated but neither is exposed. `OpenSelf` returns one
+kernel-owned, nonzero, monotonically nonrepeating handle with a fixed two-second
+lifetime. The user never supplies an authoritative PID, module ID, address, or
+deadline.
 
 `GetSelfMainModule` reports only module name, fingerprint, segment indices,
 sizes, and permission values. It deliberately omits segment bases.
@@ -102,7 +106,7 @@ pretended successful unload.
 This is source-owned same-process identity checking, not strong
 foreign-process attestation and not a production generation model.
 
-### First 3.65 run and diagnostic retest
+### 3.65 runs and module UID correction
 
 The first guarded retail 3.65 run used commit
 `f97c31f31bb1a0be063f1371964d8fa0a290c836` and SKPRX SHA-256
@@ -120,12 +124,70 @@ when the result decodes into the gate's exact `-24..-1` range; unrelated SCE
 errors are preserved.
 
 The original adapter collapsed all module-query failures and discarded their
-raw results, so the first run cannot prove whether module ID, module info,
-fingerprint, name normalization, or segment validation failed. Installed
-VitaSDK declarations, argument order, `SceKernelModuleInfo` size `0x1B8`, and
-the linked 3.63+ import NIDs all match the implementation; there is no proven
-safe API correction to make yet. Diagnostic status v2 therefore records these
-non-sensitive stage IDs:
+raw results, so the first run could not prove whether module ID, module info,
+fingerprint, name normalization, or segment validation failed. Commit
+`2f14a061a4921e807e6f484ca14ccc1a3978fc5f` added non-sensitive diagnostic
+status v2 without changing the five exports or the v1 wire layout.
+
+The guarded diagnostic run on retail 3.65 then produced JSON SHA-256
+`80661c1d1d39470d5a88ac03ba003f4660dd3d8ab9b86e3ccc65847666c7c48d`.
+`status-ready` passed and `OpenSelf` failed at stage 8,
+`module-id-mismatch`, with raw API code zero and semantic result `-13`
+transported as `0xBFFFFFF3`. No read ran. The device config and SKPRX were
+removed and normal reboot recovery completed.
+
+Stage 8 compared two `SceUID` values with different documented behavior:
+
+- `ksceKernelGetModuleIdByPid(pid)` returned the main module's kernel object
+  UID, which was then accepted by
+  `ksceKernelGetModuleInfo(pid, kernel_uid, &info)`;
+- that successful call returned the process-visible user UID in
+  `SceKernelModuleInfo.modid` for the user process.
+
+Their inequality is therefore expected on this 3.65 user process. The zero
+raw result proves that module-info lookup succeeded and that the local equality
+check alone rejected the snapshot. There was no wrapper corruption and no API
+failure at stage 8.
+
+The correction does not delete identity checking or convert one namespace by
+guess. It retains both positive UIDs as an internal dual binding, continues to
+use only the kernel UID for module-info and fingerprint calls, and requires
+both UIDs, fingerprint, exact module name, segment count, bases, sizes, and
+permissions to remain unchanged throughout the session and across each read.
+The successful module-info call is the authoritative association between the
+two UID namespaces. Numeric equality or inequality is not itself treated as an
+identity invariant. Neither UID is copied to the client or diagnostics.
+
+The API rationale is independently corroborated by public behavior evidence:
+
+- [`vitasdk/vita-headers@5e1e7d38d766e4c1634a77f6e5249caab8c8f9cb`](https://github.com/vitasdk/vita-headers/tree/5e1e7d38d766e4c1634a77f6e5249caab8c8f9cb)
+  declares `ksceKernelGetModuleIdByPid`, PID-plus-module-ID
+  `ksceKernelGetModuleInfo`, and kernel-ID
+  `ksceKernelGetModuleFingerprint`; commits
+  `3b2e37a158cb965aba72ccd5574f852d397044d0` and
+  `35123c7d40d56d4c0e3050d9efde5e9a6f560b4e` introduced and renamed the
+  main-module lookup without changing its role;
+- [`Princess-of-Sleeping/SceKernelModulemgr-Reverse@91002160801f1db11d8d669e885ae3d15af61be7`](https://github.com/Princess-of-Sleeping/SceKernelModulemgr-Reverse/tree/91002160801f1db11d8d669e885ae3d15af61be7)
+  records separate `modid_kernel` and `modid_user` fields, creation of the
+  process UID from the kernel UID, module-info lookup by kernel UID followed by
+  a process UID result for non-kernel PIDs, and fingerprint lookup by kernel
+  UID;
+- [`yifanlu/taiHEN@309b3800bcb8ebbd5e4f5e5e920af3da3590b829`](https://github.com/yifanlu/taiHEN/tree/309b3800bcb8ebbd5e4f5e5e920af3da3590b829)
+  selects kernel IDs for kernel module queries, selects the user-ID field for
+  user-process results, and explicitly converts user UIDs back to kernel UIDs
+  before kernel operations;
+- [`TheOfficialFloW/VitaShell@81af70971ba18b8ce86215b04180f1e3d21cdfc9`](https://github.com/TheOfficialFloW/VitaShell/tree/81af70971ba18b8ce86215b04180f1e3d21cdfc9)
+  passes a kernel module UID into the same PID-plus-module-info API; and
+- [`Electry/PSVshell@9a47b0eb22c60bdbddd8c7b5c9f1218c7e8a3037`](https://github.com/Electry/PSVshell/tree/9a47b0eb22c60bdbddd8c7b5c9f1218c7e8a3037)
+  resolves the exact 3.65 NIDs and passes the main-module lookup result directly
+  into module info without comparing it to the returned `modid`.
+
+These repositories are cited only as behavioral evidence. No implementation
+was copied. Pinned VitaDebugger uses ordinary user-side module UIDs with
+user-side module APIs and provides no conflicting kernel module-inventory
+evidence.
+
+Diagnostic status v2 records these non-sensitive stage IDs:
 
 | ID | Stage | Raw field |
 |---:|---|---|
@@ -133,16 +195,21 @@ non-sensitive stage IDs:
 | 2 | request copy | API return |
 | 3 | system time | API return |
 | 4-5 | title query / normalization | API return, or zero for local validation |
-| 6-8 | module ID / info / ID consistency | API return, or zero for consistency |
+| 6-7 | kernel module UID / module info | API return |
+| 8 | legacy kernel/process UID equality rejection | zero; retained to decode the diagnostic run |
 | 9-10 | fingerprint call / zero fingerprint | API return |
 | 11-12 | module name / segment validation | zero for local validation |
 | 13 | response copy | API return |
+| 14 | invalid process-visible module UID | zero; no UID is exposed |
 
-A retest must use both the newly built SKPRX and VPK. Run once and stop on the
-same first anomaly rules. If `OpenSelf` fails, retain the additive JSON
-`diagnostic` object and the `VCHG diagnostic` serial line. This diagnostic
-change has been compile/link and host validated only; it has not been deployed,
-launched, or otherwise validated on a Vita.
+A retest must use both newly built artifacts. The expected delta is that
+`OpenSelf` passes stage 8 and the client proceeds to the bounded same-process
+sentinel tests. Run once and stop on the same first-anomaly rules. If
+`OpenSelf` still fails, retain the additive JSON `diagnostic` object and the
+`VCHG diagnostic` serial line. This dual-binding correction has only been
+host-tested and Vita compile/link-inspected; it has not been deployed, rebooted,
+launched, or validated on-device. A boot loop, crash, or unexpected result
+remains a stop-and-recover event.
 
 ## Pinned SDK and firmware evidence
 
@@ -151,6 +218,22 @@ queries link the VitaSDK `3.63+` module-manager import set; all other imports
 use the named default driver/kernel libraries. Any runtime lookup failure is
 reported and fails closed. No private NID, firmware offset, or fallback copy is
 present.
+
+The 3.63+ `SceModulemgrForKernel` library NID is `0x92C9FFC2`;
+`ksceKernelGetModuleIdByPid` is `0x679F5144`,
+`ksceKernelGetModuleInfo` is `0xDAA90093`, and
+`ksceKernelGetModuleFingerprint` is `0x337A3908`. The installed declarations
+are:
+
+```c
+SceUID ksceKernelGetModuleIdByPid(SceUID pid);
+int ksceKernelGetModuleInfo(
+    SceUID pid, SceUID modid, SceKernelModuleInfo *info);
+int ksceKernelGetModuleFingerprint(
+    SceUID moduleId, SceUInt32 *pFingerprint);
+```
+
+`SceKernelModuleInfo` is `0x1B8` bytes and its `modid` member is a `SceUID`.
 
 The inspected Windows VitaSDK installation was `C:\vitasdk`. Its relevant
 declarations and SHA-256 values were:

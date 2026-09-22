@@ -204,7 +204,7 @@ static bool native_get_main_module(
     vc_hg_module_snapshot *module)
 {
     SceKernelModuleInfo info;
-    SceUID module_id;
+    SceUID kernel_module_id;
     SceUInt32 fingerprint = 0u;
     uint32_t index;
     bool ended = false;
@@ -213,17 +213,18 @@ static bool native_get_main_module(
     native_zero(module, sizeof(*module));
     native_zero(&info, sizeof(info));
     info.size = sizeof(info);
-    module_id = ksceKernelGetModuleIdByPid((SceUID)process_id);
-    if (module_id <= 0) {
+    kernel_module_id =
+        ksceKernelGetModuleIdByPid((SceUID)process_id);
+    if (kernel_module_id <= 0) {
         native_diagnostic_fail(
             context, VC_HG_DIAGNOSTIC_MODULE_ID,
-            (int32_t)module_id);
+            (int32_t)kernel_module_id);
         native_zero(&info, sizeof(info));
         native_zero(module, sizeof(*module));
         return false;
     }
     result = ksceKernelGetModuleInfo(
-        (SceUID)process_id, module_id, &info);
+        (SceUID)process_id, kernel_module_id, &info);
     if (result < 0) {
         native_diagnostic_fail(
             context, VC_HG_DIAGNOSTIC_MODULE_INFO,
@@ -232,17 +233,22 @@ static bool native_get_main_module(
         native_zero(module, sizeof(*module));
         return false;
     }
-    if (info.modid != module_id) {
+    /*
+     * A successful user-process query binds the kernel UID input to the
+     * process-visible UID returned in info.modid. They are separate
+     * namespaces and are not required to compare equal.
+     */
+    if (info.modid <= 0) {
         native_diagnostic_fail(
             context,
-            VC_HG_DIAGNOSTIC_MODULE_ID_MISMATCH,
+            VC_HG_DIAGNOSTIC_MODULE_PROCESS_UID,
             result);
         native_zero(&info, sizeof(info));
         native_zero(module, sizeof(*module));
         return false;
     }
     result = ksceKernelGetModuleFingerprint(
-        module_id, &fingerprint);
+        kernel_module_id, &fingerprint);
     if (result < 0) {
         native_diagnostic_fail(
             context,
@@ -274,7 +280,8 @@ static bool native_get_main_module(
         return false;
     }
     module->process_id = process_id;
-    module->module_id = module_id;
+    module->kernel_module_id = kernel_module_id;
+    module->process_module_id = info.modid;
     module->module_fingerprint = fingerprint;
     for (index = 0u; index < VC_HG_MAX_SEGMENTS; ++index) {
         const SceKernelSegmentInfo *segment =

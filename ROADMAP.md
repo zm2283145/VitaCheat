@@ -88,9 +88,11 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
       derives its caller PID and reads only the source-owned test process
       through a 64-byte `ksceKernelCopyFromUserProc` bounce.
 - [ ] Complete and retain the `VCHG00001` same-process native gate on owned
-      3.65 hardware. The first guarded run loaded safely and passed status but
-      failed closed in main-module discovery before any read; diagnostic
-      status v2 must identify the exact documented API stage before correction.
+      3.65 hardware. The first guarded run loaded safely and passed status; the
+      diagnostic retest proved that `OpenSelf` rejected the expected distinct
+      kernel and process-visible module UIDs after module-info succeeded. The
+      gate now binds both IDs internally and requires a guarded retest before
+      the native read path can be marked complete.
 - [ ] Design, review, and hardware-gate strong foreign-process attestation and
       a production target-read adapter before capturing any foreign bytes.
 - [x] Reconcile trusted catalog addresses into verified module/segment-relative

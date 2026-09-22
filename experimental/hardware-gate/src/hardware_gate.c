@@ -279,7 +279,10 @@ static bool vc_hg_module_equal(
     uint32_t index;
 
     if (left->process_id != right->process_id ||
-        left->module_id != right->module_id ||
+        left->kernel_module_id !=
+            right->kernel_module_id ||
+        left->process_module_id !=
+            right->process_module_id ||
         left->module_fingerprint != right->module_fingerprint ||
         left->segment_count != right->segment_count ||
         !vc_hg_bytes_equal(
@@ -308,7 +311,8 @@ static vc_hg_result vc_hg_validate_module(
     uint32_t left;
 
     if (module->process_id != process_id ||
-        module->module_id <= 0 ||
+        module->kernel_module_id <= 0 ||
+        module->process_module_id <= 0 ||
         module->module_fingerprint == 0u ||
         module->segment_count == 0u ||
         module->segment_count > VC_HG_MAX_SEGMENTS ||

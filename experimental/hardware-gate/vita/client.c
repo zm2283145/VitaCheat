@@ -159,6 +159,9 @@ static void write_result_footer(client_state *state)
     case VC_HG_DIAGNOSTIC_RESPONSE_COPY:
         stage_name = "response-copy";
         break;
+    case VC_HG_DIAGNOSTIC_MODULE_PROCESS_UID:
+        stage_name = "module-process-uid";
+        break;
     default:
         stage_name = "invalid";
         break;

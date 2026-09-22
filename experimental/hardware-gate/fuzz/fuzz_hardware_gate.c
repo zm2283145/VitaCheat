@@ -173,7 +173,8 @@ static void fuzz_initialize(
     memcpy(platform->title_id,
            "VCHG00001", sizeof("VCHG00001"));
     platform->module.process_id = platform->process_id;
-    platform->module.module_id = 29;
+    platform->module.kernel_module_id = 29;
+    platform->module.process_module_id = 30;
     platform->module.module_fingerprint = 31u;
     platform->module.segment_count = 1u;
     memcpy(platform->module.module_name,
@@ -238,7 +239,11 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     platform.copies_ok = (data[0] & 0x20u) == 0u;
     platform.read_ok = (data[0] & 0x40u) == 0u;
     if ((data[0] & 0x80u) != 0u) {
-        ++platform.module.module_fingerprint;
+        if (size > 1u && (data[1] & 1u) != 0u) {
+            ++platform.module.process_module_id;
+        } else {
+            ++platform.module.module_fingerprint;
+        }
     }
     memset(&request, 0, sizeof(request));
     memset(&response, 0xa5, sizeof(response));
