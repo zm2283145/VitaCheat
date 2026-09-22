@@ -49,7 +49,9 @@ module-info succeeded and an invalid cross-namespace UID equality check alone
 failed. The corrected gate binds both the kernel module UID and the
 process-visible module UID internally, uses only the kernel UID for kernel
 module operations, and invalidates the session if either binding changes.
-Neither run validates the native read path.
+The corrected retail 3.65 run device-validates the exact bounded read path only
+for the source-owned caller process. It provides no foreign-process, retail
+game, or production authority.
 
 ## Authority model
 

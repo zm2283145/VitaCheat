@@ -182,9 +182,12 @@ same-process, main-module-segment, 64-byte VitaSDK copy path. It is not linked
 to the production library or existing self-test, is disabled from normal
 builds, performs no automatic installation, and grants no foreign-title,
 write, injection, hook, pause, search, or network capability.
-The first guarded 3.65 run proved boot/load and status only: main-module
-discovery failed closed before any read. An append-only diagnostic status
-response is awaiting a hardware retest; no native read is yet device-validated.
+The corrected guarded retail 3.65 run passed all 23 checks, including exact
+1/63/64-byte reads from the source-owned sentinel and fail-closed range,
+identity, session, pointer, replay, and timeout cases. The
+[scoped hardware record](experimental/hardware-gate/hardware-result-retail-3.65.md)
+and exact raw JSON establish only this same-process primitive; no foreign
+process or game was read.
 
 The first Vita-facing build is the deliberately unprivileged and now
 hardware-tested
@@ -322,8 +325,9 @@ The exact native build, inspection, manual install/removal, recovery, and
 result-capture protocol is in [docs/hardware-gate.md](docs/hardware-gate.md).
 The diagnostic 3.65 run proved that its prior `OpenSelf` failure was an invalid
 kernel-UID/process-UID equality assumption; the isolated gate now binds both
-UIDs internally and awaits a guarded hardware retest before any read is
-claimed.
+UIDs internally. The corrected run device-validated the bounded source-owned
+same-process path. The next native milestone is a separate source-owned
+foreign-target generation gate, not a retail-game or production reader.
 
 ## Relationship to VitaDebugger
 

@@ -1,0 +1,33 @@
+{
+  "schema":"vitacheat.hardware-gate.result.v1",
+  "title_id":"VCHG00001",
+  "target_firmware":"3.65",
+  "scope":"same-process-source-owned-sentinel",
+  "tests":[
+    {"name":"status-ready","result":"pass","code":0},
+    {"name":"open-self","result":"pass","code":0},
+    {"name":"main-module-snapshot","result":"pass","code":0},
+    {"name":"locate-owned-sentinel","result":"pass","code":-22},
+    {"name":"module-identity-match","result":"pass","code":-14},
+    {"name":"read-zero-rejected","result":"pass","code":-20},
+    {"name":"read-one-exact","result":"pass","code":0},
+    {"name":"read-sixty-three-exact","result":"pass","code":0},
+    {"name":"read-sixty-four-exact","result":"pass","code":0},
+    {"name":"read-sixty-five-rejected","result":"pass","code":-20},
+    {"name":"segment-start","result":"pass","code":0},
+    {"name":"segment-end","result":"pass","code":0},
+    {"name":"segment-past-end-rejected","result":"pass","code":-20},
+    {"name":"offset-length-overflow-rejected","result":"pass","code":-20},
+    {"name":"invalid-segment-rejected","result":"pass","code":-19},
+    {"name":"invalid-handle-rejected","result":"pass","code":-16},
+    {"name":"bad-output-pointer-rejected","result":"pass","code":-7},
+    {"name":"single-session-bound","result":"pass","code":-15},
+    {"name":"close","result":"pass","code":0},
+    {"name":"close-replay-rejected","result":"pass","code":-16},
+    {"name":"reopen-nonrepeating","result":"pass","code":0},
+    {"name":"module-session-mismatch-rejected","result":"pass","code":-16},
+    {"name":"timeout-rejected","result":"pass","code":-17}
+  ],
+  "diagnostic":{"queried":false,"stage":0,"stage_name":"none","raw_api_code":0,"raw_api_hex":"0x00000000","query_code":0,"syscall_code":0,"syscall_hex":"0x00000000"},
+  "summary":{"passed":23,"failed":0,"result":"pass"}
+}

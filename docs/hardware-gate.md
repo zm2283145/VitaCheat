@@ -202,14 +202,32 @@ Diagnostic status v2 records these non-sensitive stage IDs:
 | 13 | response copy | API return |
 | 14 | invalid process-visible module UID | zero; no UID is exposed |
 
-A retest must use both newly built artifacts. The expected delta is that
-`OpenSelf` passes stage 8 and the client proceeds to the bounded same-process
-sentinel tests. Run once and stop on the same first-anomaly rules. If
-`OpenSelf` still fails, retain the additive JSON `diagnostic` object and the
-`VCHG diagnostic` serial line. This dual-binding correction has only been
-host-tested and Vita compile/link-inspected; it has not been deployed, rebooted,
-launched, or validated on-device. A boot loop, crash, or unexpected result
-remains a stop-and-recover event.
+The corrected guarded run used commit
+`8d74fad289b050e122c2656c0953da43aadef533`, SKPRX SHA-256
+`997cd346172f32fe71ca0041fbefa2e5a4621cb4d1ee08312c88f791b5590090`,
+and VPK SHA-256
+`387c7a8f4a6934e3f4a45e6bb5aad4fe60021aa9bb521d01fcd168eb14001d19`.
+It passed all 23 tests: status, open/module identity, 0/1/63/64/65-byte
+behavior, exact bytes, segment boundaries, overflow, invalid segment/handle/
+pointer, single-session, close/replay, nonrepeating reopen, stale-session, and
+timeout. The exact client JSON and sanitized restoration proof are retained in
+the [retail 3.65 hardware record](../experimental/hardware-gate/hardware-result-retail-3.65.md);
+the JSON SHA-256 is
+`04563275cb1fc45398f1100f4ea9c1aa4874844c7f73db0d7cf7faf0f4b635bc`.
+
+The original configuration was restored byte-for-byte, the legacy plugin
+remained active, the gate plugin was absent, and two normal reboots confirmed
+the restored state. The test application remains installed but inert. This is
+device evidence only for the source-owned same-process primitive; it does not
+validate foreign-process or game reads, writes, injection, hooks, pause, or
+production use.
+
+The next native milestone is a separately built source-owned foreign-target
+generation gate. Its target PID, process generation, main-module load
+generation, fingerprint, and readable sentinel segment must be independently
+derived and lifecycle-invalidated before a bounded read. It must not accept a
+raw PID or address from user mode. Retail-game access and a production adapter
+remain blocked until that disposable gate and stronger attestation pass.
 
 ## Pinned SDK and firmware evidence
 

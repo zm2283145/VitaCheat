@@ -87,12 +87,14 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
 - [x] Pin and compile/link an isolated experimental native transport that
       derives its caller PID and reads only the source-owned test process
       through a 64-byte `ksceKernelCopyFromUserProc` bounce.
-- [ ] Complete and retain the `VCHG00001` same-process native gate on owned
-      3.65 hardware. The first guarded run loaded safely and passed status; the
-      diagnostic retest proved that `OpenSelf` rejected the expected distinct
-      kernel and process-visible module UIDs after module-info succeeded. The
-      gate now binds both IDs internally and requires a guarded retest before
-      the native read path can be marked complete.
+- [x] Complete and retain the `VCHG00001` same-process native gate on owned
+      3.65 hardware. The corrected guarded run passed all 23 status, exact-read,
+      range, identity, session, pointer, replay, and timeout checks; the scoped
+      record proves only the source-owned same-process primitive.
+- [ ] Design and hardware-gate a disposable source-owned foreign target whose
+      PID, process generation, module-load generation, fingerprint, and readable
+      sentinel segment are independently derived and invalidated without
+      accepting a raw PID or address from user mode.
 - [ ] Design, review, and hardware-gate strong foreign-process attestation and
       a production target-read adapter before capturing any foreign bytes.
 - [x] Reconcile trusted catalog addresses into verified module/segment-relative

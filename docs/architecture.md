@@ -381,8 +381,10 @@ module-info succeeded and the failure was a local equality check between the
 main module's kernel UID and the process-visible UID returned in
 `SceKernelModuleInfo.modid`. The gate now keeps both as an unexposed dual
 binding, uses the kernel UID for module-info/fingerprint calls, and invalidates
-the session if either changes. This correction still has no on-device read
-evidence.
+the session if either changes. The corrected retail 3.65 run passed all 23
+bounded same-process checks, including exact 1/63/64-byte sentinel reads. This
+is device evidence only for the source-owned caller process and does not add
+foreign-target or production authority.
 
 The portable scanner contract is C11 plus an integer pointer type (`uintptr_t`)
 wide enough to represent object ranges. That holds for the supported Windows
