@@ -13,12 +13,15 @@ jobs:
         run: make test
       - name: Build and test experimental hardware gate with Make
         run: make hardware-gate-test hardware-gate-fuzz-smoke
+      - name: Build and test foreign-target gate with Make
+        run: make foreign-target-gate-test foreign-target-gate-fuzz-smoke
       - name: Configure GCC with CMake and Ninja
         run: >-
           cmake -S . -B build-gcc -G Ninja
           -DCMAKE_BUILD_TYPE=Debug
           -DCMAKE_C_COMPILER=gcc
           -DVITACHEAT_ENABLE_HARDWARE_GATE=ON
+          -DVITACHEAT_ENABLE_FOREIGN_TARGET_GATE=ON
       - name: Build with GCC
         run: cmake --build build-gcc --parallel
       - name: Test GCC build
@@ -33,6 +36,7 @@ jobs:
           cmake -S . -B build-msvc -A x64
           -DCMAKE_BUILD_TYPE=Debug
           -DVITACHEAT_ENABLE_HARDWARE_GATE=ON
+          -DVITACHEAT_ENABLE_FOREIGN_TARGET_GATE=ON
       - name: Build with MSVC /W4 /WX
         run: cmake --build build-msvc --config Debug --parallel
       - name: Test MSVC build
@@ -49,11 +53,13 @@ jobs:
           -DCMAKE_C_COMPILER=gcc
           -DVITACHEAT_ENABLE_ANALYZER=ON
           -DVITACHEAT_ENABLE_HARDWARE_GATE=ON
+          -DVITACHEAT_ENABLE_FOREIGN_TARGET_GATE=ON
           -DBUILD_TESTING=OFF
       - name: Run GCC analyzer
         run: >-
           cmake --build build-analyzer
           --target vitacheat_core vitacheat_hardware_gate_core
+          vitacheat_foreign_target_gate_core
           --parallel
 
   sanitizer-and-fuzz:
@@ -68,6 +74,7 @@ jobs:
           -DVITACHEAT_ENABLE_SANITIZERS=ON
           -DVITACHEAT_BUILD_FUZZERS=ON
           -DVITACHEAT_ENABLE_HARDWARE_GATE=ON
+          -DVITACHEAT_ENABLE_FOREIGN_TARGET_GATE=ON
       - name: Build
         run: cmake --build build-sanitize --parallel
       - name: Run sanitizer tests
@@ -90,3 +97,5 @@ jobs:
         run: ./build-sanitize/vitacheat_memory_service_fuzzer -runs=10000 -max_len=640
       - name: Run bounded hardware gate fuzzer
         run: ./build-sanitize/experimental/hardware-gate/vitacheat_hardware_gate_fuzzer -runs=10000 -max_len=160
+      - name: Run bounded foreign-target gate fuzzer
+        run: ./build-sanitize/experimental/foreign-target-gate/vitacheat_foreign_target_gate_fuzzer -runs=10000 -max_len=192

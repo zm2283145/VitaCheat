@@ -30,6 +30,11 @@ HARDWARE_GATE_FUZZ_SMOKE_BIN := $(BUILD_DIR)/vitacheat_hardware_gate_fuzz_smoke
 HARDWARE_GATE_SOURCE := experimental/hardware-gate/src/hardware_gate.c
 HARDWARE_GATE_HEADER := experimental/hardware-gate/include/vitacheat/hardware_gate.h
 HARDWARE_GATE_CPPFLAGS := -Iexperimental/hardware-gate/include
+FOREIGN_GATE_TEST_BIN := $(BUILD_DIR)/vitacheat_foreign_target_gate_tests
+FOREIGN_GATE_FUZZ_SMOKE_BIN := $(BUILD_DIR)/vitacheat_foreign_target_gate_fuzz_smoke
+FOREIGN_GATE_SOURCE := experimental/foreign-target-gate/src/foreign_target_gate.c
+FOREIGN_GATE_HEADER := experimental/foreign-target-gate/include/vitacheat/foreign_target_gate.h
+FOREIGN_GATE_CPPFLAGS := -Iexperimental/foreign-target-gate/include
 TEST_BINS := $(SEARCH_TEST_BIN) $(PSV_TEST_BIN) $(ACTIVATION_TEST_BIN) \
 	$(PAUSE_TEST_BIN) $(LAUNCH_BROKER_TEST_BIN) $(LAUNCH_SERVICE_TEST_BIN) \
 	$(QUICK_MENU_LAUNCHER_TEST_BIN) $(LAUNCH_CLAIMANT_TEST_BIN) \
@@ -74,6 +79,8 @@ VITA_PORTABLE_CHECK_OBJECTS := $(VITA_BUILD_DIR)/pause-portable.o \
 	launch-claimant-fuzz-smoke menu-coordinator-fuzz-smoke \
 	target-attestation-fuzz-smoke memory-service-fuzz-smoke \
 	hardware-gate-test hardware-gate-fuzz-smoke hardware-gate-analyze \
+	foreign-target-gate-test foreign-target-gate-fuzz-smoke \
+	foreign-target-gate-analyze \
 	analyze vita-self-test clean
 
 all: $(TEST_BINS)
@@ -197,6 +204,31 @@ hardware-gate-fuzz-smoke: $(HARDWARE_GATE_FUZZ_SMOKE_BIN)
 hardware-gate-analyze:
 	$(CC) $(HARDWARE_GATE_CPPFLAGS) $(CFLAGS) $(ANALYZER_FLAGS) \
 		-fsyntax-only $(HARDWARE_GATE_SOURCE)
+
+$(FOREIGN_GATE_TEST_BIN): $(FOREIGN_GATE_SOURCE) \
+		experimental/foreign-target-gate/tests/test_foreign_target_gate.c \
+		$(FOREIGN_GATE_HEADER) | $(BUILD_DIR)
+	$(CC) $(FOREIGN_GATE_CPPFLAGS) $(CFLAGS) \
+		$(FOREIGN_GATE_SOURCE) \
+		experimental/foreign-target-gate/tests/test_foreign_target_gate.c -o $@
+
+foreign-target-gate-test: $(FOREIGN_GATE_TEST_BIN)
+	./$(FOREIGN_GATE_TEST_BIN)
+
+$(FOREIGN_GATE_FUZZ_SMOKE_BIN): $(FOREIGN_GATE_SOURCE) \
+		experimental/foreign-target-gate/fuzz/fuzz_foreign_target_gate.c \
+		$(FOREIGN_GATE_HEADER) | $(BUILD_DIR)
+	$(CC) $(FOREIGN_GATE_CPPFLAGS) $(CFLAGS) \
+		-DVC_FTG_FUZZ_STANDALONE \
+		$(FOREIGN_GATE_SOURCE) \
+		experimental/foreign-target-gate/fuzz/fuzz_foreign_target_gate.c -o $@
+
+foreign-target-gate-fuzz-smoke: $(FOREIGN_GATE_FUZZ_SMOKE_BIN)
+	./$(FOREIGN_GATE_FUZZ_SMOKE_BIN)
+
+foreign-target-gate-analyze:
+	$(CC) $(FOREIGN_GATE_CPPFLAGS) $(CFLAGS) $(ANALYZER_FLAGS) \
+		-fsyntax-only $(FOREIGN_GATE_SOURCE)
 
 analyze:
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(ANALYZER_FLAGS) -fsyntax-only $(CORE_SOURCES)

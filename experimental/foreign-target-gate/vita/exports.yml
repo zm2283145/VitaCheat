@@ -1,0 +1,21 @@
+VitaCheatForeignGate:
+  nid: 0x46544731
+  attributes: 7
+  process_image: false
+  imagemodule: false
+  version:
+    major: 1
+    minor: 0
+  main:
+    start: module_start
+    stop: module_stop
+  libraries:
+    VitaCheatForeignGate:
+      syscall: true
+      version: 1
+      nid: 0x56434647
+      functions:
+        - vcfgGetStatus: 0x18D84F21
+        - vcfgOpenExactFixture: 0xA8B1466C
+        - vcfgReadFixtureSegment: 0x70F14E77
+        - vcfgClose: 0x2CB3D522

@@ -53,6 +53,24 @@ The corrected retail 3.65 run device-validates the exact bounded read path only
 for the source-owned caller process. It provides no foreign-process, retail
 game, or production authority.
 
+The separate `experimental/foreign-target-gate/` does not widen or replace
+that gate. It has its own four-call ABI, exact source-owned target
+`VCFT00001`, and exact controller `VCFC00001`. Kernel-owned process-event
+create/start ordering assigns the only process generation; exit/kill,
+duplicate/out-of-order events, callback contention, generation/revision
+exhaustion, module churn, expiry, or clock rollback invalidate all authority.
+Only a symbolic segment/index/offset read of at most 64 bytes can reach the
+already proven fixed bounce chain. User mode cannot provide an authoritative
+PID, title, module UID, fingerprint, generation, revision, or address.
+
+The foreign gate is currently host- and Vita-cross-build validated only. Its
+process-event ordering, two-VPK suspend/resume residency, foreign-copy
+behavior, and unregister quiescence have no device result. A pre-registration
+fixture is never reconciled into authority; it stays unavailable, and any
+later start without a matching create fails closed. The manual protocol
+requires boot registration and reboot cleanup. None of this grants the
+portable production service a native adapter.
+
 ## Authority model
 
 - Read discovery, snapshot capture, writes, and persistent freezes are separate
@@ -294,6 +312,33 @@ does not satisfy any of those requirements.
 - The gate must be removed and the Vita rebooted after testing. A pass is only
   evidence for the source-owned same-process primitive described in
   `docs/hardware-gate.md`.
+
+### Disposable foreign-target generation-gate rules
+
+- Compile-time titles are exactly `VCFT00001` and `VCFC00001`; only the
+  controller can open/read/close, while the target verifies wrong-caller
+  rejection.
+- A target create event establishes only an exact-title candidate. The
+  matching first start receives a nonzero monotonic kernel generation and
+  binds exact PID, dual module UID namespaces, fingerprint, normalized module
+  name, segments, and lifecycle revision.
+- Unknown, duplicate, missed, out-of-order, concurrent, or exhausted
+  lifecycle state fails closed for the module lifetime. Exit and kill scrub
+  the target and all handles before any relaunch can be authorized.
+- Open takes no selector and returns only an opaque two-second handle. Read
+  takes only that handle, segment index, offset, and 1-64 byte length.
+- Target and module identity are re-queried before and after the
+  target-to-kernel bounce. A callback race prevents copy-out or scrubs the
+  source-owned response before returning failure.
+- The source is allocation-free and has no write, injection, hook, pause,
+  search, network, raw PID/address, retail-title, private-NID, or runtime
+  deployment path.
+- Stop unregisters the stored callback UID but always refuses runtime unload
+  after a successful registration; reboot is mandatory because VitaSDK does
+  not document callback drain semantics.
+- No device pass exists yet. See
+  `docs/foreign-target-generation-gate.md` for the exact non-claims and manual
+  protocol.
 
 The first foreign-process write gate is reserved for the user's offline
 US Ratchet & Clank Collection (`PCSA00133`) version `1.00` test. Its upstream

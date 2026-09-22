@@ -1,0 +1,94 @@
+{
+  "schema": "vitacheat.foreign-target-gate.manual-run.v1",
+  "base": {
+    "native_read_gate_commit": "1233c08656a1c219d8de0fd7dde1257986ed3a97",
+    "device_tested_parent_commit": "8d74fad289b050e122c2656c0953da43aadef533",
+    "device_tested_parent_result_sha256": "04563275cb1fc45398f1100f4ea9c1aa4874844c7f73db0d7cf7faf0f4b635bc"
+  },
+  "target_firmware": "3.65",
+  "titles": {
+    "target": "VCFT00001",
+    "controller": "VCFC00001"
+  },
+  "build": {
+    "source": "experimental/foreign-target-gate/vita",
+    "output": "build-vita-foreign-target-gate",
+    "required_options": {
+      "VITACHEAT_FOREIGN_TARGET_GATE": "ON",
+      "VITACHEAT_FOREIGN_GATE_TARGET_TITLE_ID": "VCFT00001",
+      "VITACHEAT_FOREIGN_GATE_CONTROLLER_TITLE_ID": "VCFC00001",
+      "VITACHEAT_FOREIGN_GATE_FIRMWARE": "3.65",
+      "VITACHEAT_FOREIGN_GATE_LIFECYCLE": "SUSPENDED_SOURCE_FIXTURE"
+    }
+  },
+  "artifacts": [
+    {
+      "name": "vitacheat-foreign-target-gate.skprx",
+      "bytes": 11299,
+      "sha256": "f2b9c59f296eb05485523f294164a6b173c8dce2ddb5900b02ee19976cdc96a7"
+    },
+    {
+      "name": "vitacheat-foreign-target-fixture.vpk",
+      "bytes": 5234,
+      "sha256": "9966d0fca2e967725dc3b1a5bd5152a48de827629ee2b92d21d4c54ab29e4b7c"
+    },
+    {
+      "name": "vitacheat-foreign-target-controller.vpk",
+      "bytes": 7105,
+      "sha256": "a1ed808a8c9c2db89a5d146e97836aec370136e8a73a7da736eeb8ef35d3a303"
+    },
+    {
+      "name": "libVitaCheatForeignGate_stub.a",
+      "bytes": 3728,
+      "sha256": "63199aafac1662bd6724d6ae1140db3768a822606bf68b157a80c7b0cff6df10"
+    }
+  ],
+  "inventories": [
+    "symbol-inventory.txt",
+    "artifact-inventory.txt"
+  ],
+  "install": {
+    "automatic_deployment": false,
+    "kernel_destination": "ux0:tai/vitacheat-foreign-target-gate.skprx",
+    "kernel_config_line": "ux0:tai/vitacheat-foreign-target-gate.skprx",
+    "requires_reboot_before_apps": true
+  },
+  "run": [
+    "Launch VCFC00001 before VCFT00001.",
+    "Allow the controller to verify target-unavailable and launch VCFT00001.",
+    "In VCFT00001 press X once to launch or resume VCFC00001.",
+    "Allow VCFC00001 to read, destroy only VCFT00001, and verify the stale handle.",
+    "Allow VCFC00001 to relaunch VCFT00001.",
+    "In the relaunched VCFT00001 press X once.",
+    "Retrieve both JSON results and all serial lines beginning VCFG."
+  ],
+  "results": [
+    "ux0:data/vitacheat-foreign-target-result.json",
+    "ux0:data/vitacheat-foreign-target-fixture.json"
+  ],
+  "stop_conditions": [
+    "any failed test",
+    "fail-closed or API-mismatch status",
+    "unexpected title or syscall code",
+    "missing or truncated result",
+    "hang or reboot"
+  ],
+  "recovery": [
+    "Hold L during boot to bypass taiHEN plugin loading if necessary.",
+    "Remove only the exact kernel config line.",
+    "Delete only ux0:tai/vitacheat-foreign-target-gate.skprx.",
+    "Remove VCFT00001 and VCFC00001.",
+    "Reboot twice and verify normal operation."
+  ],
+  "claims": {
+    "device_executed": false,
+    "retail_games": false,
+    "writes": false,
+    "injection": false,
+    "hooks": false,
+    "pause": false,
+    "search": false,
+    "network": false,
+    "production_installation": false
+  }
+}

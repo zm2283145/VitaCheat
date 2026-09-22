@@ -91,10 +91,14 @@ README. Each Vita-facing milestone will receive a reproducible hardware record.
       3.65 hardware. The corrected guarded run passed all 23 status, exact-read,
       range, identity, session, pointer, replay, and timeout checks; the scoped
       record proves only the source-owned same-process primitive.
-- [ ] Design and hardware-gate a disposable source-owned foreign target whose
-      PID, process generation, module-load generation, fingerprint, and readable
-      sentinel segment are independently derived and invalidated without
-      accepting a raw PID or address from user mode.
+- [x] Design, host-test, and Vita-cross-build a disposable source-owned foreign
+      target whose PID, kernel-owned event generation, dual module UID
+      namespaces, fingerprint, bounded segments, and lifecycle revision are
+      independently derived and invalidated without accepting a raw PID or
+      address from user mode.
+- [ ] Run the guarded `VCFT00001`/`VCFC00001` foreign-target gate on owned
+      retail 3.65 hardware and retain the exact result, artifact hashes,
+      process-event ordering, suspend/resume residency, and restoration proof.
 - [ ] Design, review, and hardware-gate strong foreign-process attestation and
       a production target-read adapter before capturing any foreign bytes.
 - [x] Reconcile trusted catalog addresses into verified module/segment-relative

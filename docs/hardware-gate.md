@@ -15,6 +15,13 @@ thread, search memory, expose network control, or edit `tai/config.txt`.
 `PCSA00133`, every other foreign title, menu integration, writes, pause, and
 injection remain blocked.
 
+The unchanged same-process gate later passed all 23 checks on retail firmware
+3.65. Its separately scoped dependent experiment is
+[`foreign-target-generation-gate.md`](foreign-target-generation-gate.md):
+an event-generation-bound `VCFT00001`/`VCFC00001` source-owned pair that has
+host and Vita cross-build evidence but no device result. That layer does not
+retroactively widen this ABI or its same-process hardware claim.
+
 The branch is based on `read-only-memory-service` commit
 `3cb074e7aaeeb5179ba2d49a69c57f053b597e20`, whose parent is
 target-attestation-foundation commit

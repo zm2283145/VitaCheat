@@ -386,6 +386,27 @@ bounded same-process checks, including exact 1/63/64-byte sentinel reads. This
 is device evidence only for the source-owned caller process and does not add
 foreign-target or production authority.
 
+The separate `experimental/foreign-target-gate/` keeps that proven ABI
+unchanged and adds an isolated event-generation model. A fixed
+`SceProcEventForDriver` registry accepts only exact source-owned `VCFT00001`
+create/start events, assigns a kernel monotonic generation, binds the dual
+module UID namespaces/fingerprint/segments, and invalidates the record and
+opaque controller handle on exit or kill. Exact `VCFC00001` caller identity is
+kernel-derived. Its public read request contains only an opaque handle plus
+segment index/offset and a length capped at 64; PID, generation, revision,
+module identity, fingerprint, and addresses never cross the ABI. Lifecycle
+callbacks that overlap an unlocked adapter operation atomically trip a
+permanent fail-closed latch, and a raced response is scrubbed before the
+blocked caller returns.
+
+The full host state machine and strict VitaSDK artifacts build successfully,
+but the Vita layer has no device result. `SceProcEventForDriver` callback
+ordering and unregister quiescence, two-homebrew suspend/resume residency, and
+foreign-target copying are therefore explicit hardware-gate questions. A
+pre-registration target receives no generation and cannot be opened; an
+out-of-order later start fails closed. Runtime unload is not a recovery path.
+See `docs/foreign-target-generation-gate.md`.
+
 The portable scanner contract is C11 plus an integer pointer type (`uintptr_t`)
 wide enough to represent object ranges. That holds for the supported Windows
 host and ARM Vita targets and lets the parser reject overlapping source and
@@ -408,10 +429,12 @@ rather than one general memory service:
 
 None of these capabilities is represented by the production v1 operation or
 capability mask; unknown operations and bits fail closed. The ordinary Vita
-self-test remains buffer-only. The separate native hardware gate uses a
-disposable namespace solely to test the SDK's same-process per-PID copy path;
-cross-process access, kernel hooks, user-plugin injection, and overlay
-rendering remain later milestones with their own threat models and evidence.
+self-test remains buffer-only. The same-process and foreign-target gates use
+separate disposable namespaces. The former has a passing 3.65 record; the
+latter is only host/cross-build validated and exists to test event-derived
+foreign identity against two source-owned VPKs. Retail-title access, kernel
+hooks, user-plugin injection, and overlay rendering remain later milestones
+with their own threat models and evidence.
 
 ## Future native Quick Menu launcher and injected in-game menu
 

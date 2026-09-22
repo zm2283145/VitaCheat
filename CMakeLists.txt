@@ -6,6 +6,7 @@ option(VITACHEAT_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehavio
 option(VITACHEAT_BUILD_FUZZERS "Build libFuzzer targets" OFF)
 option(VITACHEAT_ENABLE_ANALYZER "Enable the GCC static analyzer" OFF)
 option(VITACHEAT_ENABLE_HARDWARE_GATE "Build the isolated experimental hardware-gate host targets" OFF)
+option(VITACHEAT_ENABLE_FOREIGN_TARGET_GATE "Build the isolated foreign-target gate host targets" OFF)
 
 add_library(vitacheat_core STATIC
     src/launch_broker.c
@@ -184,6 +185,10 @@ include(CTest)
 
 if(VITACHEAT_ENABLE_HARDWARE_GATE)
     add_subdirectory(experimental/hardware-gate)
+endif()
+
+if(VITACHEAT_ENABLE_FOREIGN_TARGET_GATE)
+    add_subdirectory(experimental/foreign-target-gate)
 endif()
 
 if(BUILD_TESTING)

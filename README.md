@@ -189,6 +189,19 @@ identity, session, pointer, replay, and timeout cases. The
 and exact raw JSON establish only this same-process primitive; no foreign
 process or game was read.
 
+A second isolated opt-in
+[`experimental/foreign-target-gate`](docs/foreign-target-generation-gate.md)
+now host-tests and cross-builds the next disposable source-owned layer. Its
+event-driven kernel registry binds exact `VCFT00001` create/start/exit/kill
+events to a monotonic process generation, dual module-UID namespaces,
+fingerprint, segments, and lifecycle revision. Only exact controller
+`VCFC00001` can request an opaque two-second handle and one symbolic
+segment-relative read of at most 64 bytes. The Vita kit produces two VPKs and
+one SKPRX with build-failing import/export allowlists and no automatic
+deployment. It has not been run on hardware, so process-event ordering,
+two-application suspend/resume residency, foreign copying, and unload remain
+unproven and no retail or production authority is claimed.
+
 The first Vita-facing build is the deliberately unprivileged and now
 hardware-tested
 [`VCHT00001` self-test](vita-self-test/README.md). It provides a real on-device
@@ -307,6 +320,10 @@ The opt-in hardware-gate fuzzer is
 `build-sanitize/experimental/hardware-gate/vitacheat_hardware_gate_fuzzer
 -runs=10000 -max_len=160` when
 `-DVITACHEAT_ENABLE_HARDWARE_GATE=ON`.
+The foreign-target fuzzer is
+`build-sanitize/experimental/foreign-target-gate/vitacheat_foreign_target_gate_fuzzer
+-runs=10000 -max_len=192` when
+`-DVITACHEAT_ENABLE_FOREIGN_TARGET_GATE=ON`.
 Dependency-free deterministic smoke targets are also available as
 `make launch-service-fuzz-smoke` and
 `make quick-menu-launcher-fuzz-smoke` and
@@ -315,19 +332,25 @@ Dependency-free deterministic smoke targets are also available as
 `make target-attestation-fuzz-smoke` and
 `make memory-service-fuzz-smoke`. The isolated targets are
 `make hardware-gate-test hardware-gate-fuzz-smoke hardware-gate-analyze`.
+The foreign-target equivalents are
+`make foreign-target-gate-test foreign-target-gate-fuzz-smoke
+foreign-target-gate-analyze`.
 GCC's bounded static-analyzer pass is
 available as `make analyze` or with
 `-DVITACHEAT_ENABLE_ANALYZER=ON -DBUILD_TESTING=OFF`.
 
 VitaSDK is not required to build and run the host tests. Building the Vita
-self-test VPK or the separately enabled hardware gate does require VitaSDK.
+self-test VPK or either separately enabled hardware gate does require VitaSDK.
 The exact native build, inspection, manual install/removal, recovery, and
-result-capture protocol is in [docs/hardware-gate.md](docs/hardware-gate.md).
+result-capture protocols are in [docs/hardware-gate.md](docs/hardware-gate.md)
+and
+[docs/foreign-target-generation-gate.md](docs/foreign-target-generation-gate.md).
 The diagnostic 3.65 run proved that its prior `OpenSelf` failure was an invalid
 kernel-UID/process-UID equality assumption; the isolated gate now binds both
 UIDs internally. The corrected run device-validated the bounded source-owned
-same-process path. The next native milestone is a separate source-owned
-foreign-target generation gate, not a retail-game or production reader.
+same-process path. The separate source-owned foreign-target generation gate is
+now host- and cross-build validated but awaits its first guarded 3.65 device
+run; it is not a retail-game or production reader.
 
 ## Relationship to VitaDebugger
 
@@ -457,10 +480,15 @@ listed only after their own gates pass.
 - `experimental/hardware-gate/` — opt-in portable gate model, host
   tests/fuzzer, VitaSDK SKPRX adapter, generated syscall-stub build, and
   disposable `VCHG00001` validation client.
+- `experimental/foreign-target-gate/` — separate opt-in lifecycle-generation
+  model, host tests/fuzzer, strict VitaSDK SKPRX, and source-owned
+  `VCFT00001`/`VCFC00001` fixture pair.
 - `vita-self-test/` — ordinary user-mode on-device menu and owned-buffer probe.
 - `docs/architecture.md` — component boundaries and data flow.
 - `docs/hardware-gate.md` — experimental ABI, SDK evidence, build, and manual
   hardware protocol.
+- `docs/foreign-target-generation-gate.md` — foreign lifecycle API audit,
+  opaque-handle ABI, build inventories, and guarded manual protocol.
 - `docs/legacy-psv-compatibility.md` — compatibility guarantees and limits.
 - `docs/security-model.md` — authority, transport, database, and cleanup rules.
 - `ROADMAP.md` — staged work from the host core to hardware validation.
